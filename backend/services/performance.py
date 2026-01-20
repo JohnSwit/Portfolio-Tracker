@@ -188,8 +188,8 @@ class PerformanceService:
             active_return = twr - benchmark_return
 
             # Tracking error
-            portfolio_returns = portfolio_values.pct_change().dropna()
-            benchmark_returns = benchmark_data.pct_change().dropna()
+            portfolio_returns = portfolio_values.pct_change(fill_method=None).dropna()
+            benchmark_returns = benchmark_data.pct_change(fill_method=None).dropna()
 
             # Align returns
             aligned = pd.DataFrame({

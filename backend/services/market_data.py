@@ -124,8 +124,15 @@ class MarketDataService:
             )
             # For single symbol, ensure 1D series
             close_data = data['Close']
-            if hasattr(close_data, 'squeeze'):
-                close_data = close_data.squeeze()
+
+            # Handle multi-dimensional data
+            if isinstance(close_data, pd.DataFrame):
+                # If it's a DataFrame, take the first column
+                close_data = close_data.iloc[:, 0]
+            elif hasattr(close_data, 'values') and len(close_data.shape) > 1:
+                # If it's a multi-dimensional array, flatten it
+                close_data = pd.Series(close_data.values.flatten(), index=close_data.index)
+
             return close_data
         except Exception as e:
             logger.error(f"Error fetching benchmark data for {benchmark}: {e}")

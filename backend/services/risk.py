@@ -47,7 +47,7 @@ class RiskService:
 
             # Get benchmark returns
             benchmark_data = market_data_service.get_benchmark_data(benchmark, start_date, end_date)
-            benchmark_returns = benchmark_data.pct_change().dropna()
+            benchmark_returns = benchmark_data.pct_change(fill_method=None).dropna()
 
             # Volatility measures
             daily_vol = portfolio_returns.std()
@@ -175,7 +175,7 @@ class RiskService:
             else:
                 prices = price_data[symbol]['Close']
 
-            returns_df[symbol] = prices.pct_change()
+            returns_df[symbol] = prices.pct_change(fill_method=None)
 
         # Weight the returns
         portfolio_returns = pd.Series(0.0, index=returns_df.index)
