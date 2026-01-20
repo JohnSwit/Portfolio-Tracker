@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 import logging
 import os
@@ -109,7 +109,7 @@ async def get_transactions(
 ):
     """Get transaction history"""
     try:
-        end_date = datetime.now()
+        end_date = datetime.now(timezone.utc)
         start_date = end_date - timedelta(days=days)
 
         if SCHWAB_AVAILABLE:
@@ -134,11 +134,11 @@ async def calculate_performance(
         portfolio = await get_portfolio(account_id)
         transactions_response = await get_transactions(
             account_id,
-            days=(datetime.now() - date_range.start_date).days
+            days=(datetime.now(timezone.utc) - date_range.start_date).days
         )
         transactions = transactions_response.get("transactions", [])
 
-        end_date = date_range.end_date or datetime.now()
+        end_date = date_range.end_date or datetime.now(timezone.utc)
 
         metrics = performance_service.calculate_performance_metrics(
             portfolio,
@@ -164,11 +164,11 @@ async def calculate_attribution(
         portfolio = await get_portfolio(account_id)
         transactions_response = await get_transactions(
             account_id,
-            days=(datetime.now() - date_range.start_date).days
+            days=(datetime.now(timezone.utc) - date_range.start_date).days
         )
         transactions = transactions_response.get("transactions", [])
 
-        end_date = date_range.end_date or datetime.now()
+        end_date = date_range.end_date or datetime.now(timezone.utc)
 
         attribution = performance_service.calculate_attribution(
             portfolio,
@@ -192,7 +192,7 @@ async def calculate_risk(
     """Calculate risk metrics"""
     try:
         portfolio = await get_portfolio(account_id)
-        end_date = date_range.end_date or datetime.now()
+        end_date = date_range.end_date or datetime.now(timezone.utc)
 
         metrics = risk_service.calculate_risk_metrics(
             portfolio,
@@ -336,8 +336,8 @@ def _get_mock_portfolio(account_id: str) -> Portfolio:
         transactions=[],
         cash_balance=5000,
         total_value=total_value + 5000,
-        inception_date=datetime.now() - timedelta(days=365),
-        last_updated=datetime.now()
+        inception_date=datetime.now(timezone.utc) - timedelta(days=365),
+        last_updated=datetime.now(timezone.utc)
     )
 
 
