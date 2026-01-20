@@ -596,6 +596,53 @@ async def validate_ticker(symbol: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/debug/portfolio/{account_id}")
+async def debug_portfolio(account_id: str):
+    """Debug endpoint to see portfolio and transaction details"""
+    try:
+        # Get portfolio
+        portfolio = await get_portfolio(account_id)
+
+        # Get all transactions
+        db_transactions = database.get_transactions(account_id)
+
+        return {
+            "portfolio": {
+                "account_id": portfolio.account_id,
+                "total_value": portfolio.total_value,
+                "cash_balance": portfolio.cash_balance,
+                "holdings_count": len(portfolio.holdings),
+                "holdings": [
+                    {
+                        "symbol": h.symbol,
+                        "quantity": h.quantity,
+                        "market_value": h.market_value,
+                        "current_price": h.current_price
+                    }
+                    for h in portfolio.holdings
+                ],
+                "inception_date": portfolio.inception_date.isoformat() if portfolio.inception_date else None
+            },
+            "transactions": {
+                "count": len(db_transactions),
+                "transactions": [
+                    {
+                        "date": t['date'],
+                        "symbol": t['symbol'],
+                        "type": t['transaction_type'],
+                        "quantity": t['quantity'],
+                        "price": t['price'],
+                        "amount": t['amount']
+                    }
+                    for t in db_transactions[:20]  # First 20 only
+                ]
+            }
+        }
+    except Exception as e:
+        logger.error(f"Debug error: {e}")
+        return {"error": str(e)}
+
+
 # Helper functions
 def _calculate_portfolio_from_transactions(account_id: str, transactions_data: List[dict]) -> Portfolio:
     """Calculate current portfolio holdings from transaction history"""
