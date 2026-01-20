@@ -122,7 +122,11 @@ class MarketDataService:
                 end=end_date,
                 progress=False
             )
-            return data['Close']
+            # For single symbol, ensure 1D series
+            close_data = data['Close']
+            if hasattr(close_data, 'squeeze'):
+                close_data = close_data.squeeze()
+            return close_data
         except Exception as e:
             logger.error(f"Error fetching benchmark data for {benchmark}: {e}")
             raise
