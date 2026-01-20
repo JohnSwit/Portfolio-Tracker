@@ -171,9 +171,17 @@ async def calculate_performance(
     """Calculate performance metrics"""
     try:
         portfolio = await get_portfolio(account_id)
+
+        # Fetch ALL transactions from inception, not just the date range
+        # Performance calculations need all historical transactions to reconstruct holdings
+        if portfolio.inception_date:
+            days_since_inception = (datetime.now(timezone.utc) - portfolio.inception_date).days + 30  # Add buffer
+        else:
+            days_since_inception = 3650  # Default to 10 years if no inception date
+
         transactions_response = await get_transactions(
             account_id,
-            days=(datetime.now(timezone.utc) - date_range.start_date).days
+            days=days_since_inception
         )
         transactions = transactions_response.get("transactions", [])
 
@@ -210,9 +218,16 @@ async def calculate_attribution(
     """Calculate return attribution"""
     try:
         portfolio = await get_portfolio(account_id)
+
+        # Fetch ALL transactions from inception, not just the date range
+        if portfolio.inception_date:
+            days_since_inception = (datetime.now(timezone.utc) - portfolio.inception_date).days + 30
+        else:
+            days_since_inception = 3650  # Default to 10 years
+
         transactions_response = await get_transactions(
             account_id,
-            days=(datetime.now(timezone.utc) - date_range.start_date).days
+            days=days_since_inception
         )
         transactions = transactions_response.get("transactions", [])
 
