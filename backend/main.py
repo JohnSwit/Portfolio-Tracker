@@ -327,16 +327,66 @@ async def upload_csv(account_id: str, file: UploadFile = File(...)):
         # Parse CSV
         transactions = csv_parser.parse_transactions_csv(file_content)
 
+        # Auto-generate offsetting cash transactions to keep cash balance at zero
+        all_transactions = []
+        for txn in transactions:
+            all_transactions.append(txn)
+
+            txn_type = txn['transaction_type']
+            if txn_type == 'buy':
+                # For buy: deposit cash to fund the purchase
+                cash_amount = txn['quantity'] * txn['price'] + txn['fees']
+                cash_txn = {
+                    'date': txn['date'],
+                    'symbol': 'CASH',
+                    'transaction_type': 'deposit',
+                    'quantity': cash_amount,
+                    'price': 1.0,
+                    'amount': cash_amount,
+                    'fees': 0.0,
+                    'notes': f"Auto-deposit to fund {txn['symbol']} purchase"
+                }
+                all_transactions.append(cash_txn)
+            elif txn_type == 'sell':
+                # For sell: withdraw cash from the sale proceeds
+                cash_amount = txn['quantity'] * txn['price'] - txn['fees']
+                cash_txn = {
+                    'date': txn['date'],
+                    'symbol': 'CASH',
+                    'transaction_type': 'withdrawal',
+                    'quantity': cash_amount,
+                    'price': 1.0,
+                    'amount': -cash_amount,
+                    'fees': 0.0,
+                    'notes': f"Auto-withdrawal of {txn['symbol']} sale proceeds"
+                }
+                all_transactions.append(cash_txn)
+            elif txn_type == 'dividend':
+                # For dividend: withdraw the dividend cash
+                cash_amount = txn['quantity'] * txn['price']
+                cash_txn = {
+                    'date': txn['date'],
+                    'symbol': 'CASH',
+                    'transaction_type': 'withdrawal',
+                    'quantity': cash_amount,
+                    'price': 1.0,
+                    'amount': -cash_amount,
+                    'fees': 0.0,
+                    'notes': f"Auto-withdrawal of {txn['symbol']} dividend"
+                }
+                all_transactions.append(cash_txn)
+
         # Save to database
-        inserted = database.save_transactions(account_id, transactions)
+        inserted = database.save_transactions(account_id, all_transactions)
 
         # Create or update portfolio record
         database.get_or_create_portfolio(account_id, f"Portfolio {account_id}")
 
         return {
             "success": True,
-            "transactions_imported": inserted,
-            "message": f"Successfully imported {inserted} transactions"
+            "transactions_imported": len(transactions),
+            "total_transactions_saved": inserted,
+            "message": f"Successfully imported {len(transactions)} transactions (with auto cash management)"
         }
 
     except ValueError as e:
@@ -444,13 +494,60 @@ async def add_transaction(account_id: str, transaction: dict):
             'notes': transaction.get('notes', '')
         }
 
-        database.save_transactions(account_id, [txn_data])
+        # Auto-generate offsetting cash transaction to keep cash balance at zero
+        transactions_to_save = [txn_data]
+
+        if txn_type == 'buy':
+            # For buy: deposit cash to fund the purchase
+            cash_amount = quantity * price + fees
+            cash_txn = {
+                'date': date.isoformat(),
+                'symbol': 'CASH',
+                'transaction_type': 'deposit',
+                'quantity': cash_amount,
+                'price': 1.0,
+                'amount': cash_amount,
+                'fees': 0.0,
+                'notes': f'Auto-deposit to fund {symbol} purchase'
+            }
+            transactions_to_save.append(cash_txn)
+        elif txn_type == 'sell':
+            # For sell: withdraw cash from the sale proceeds
+            cash_amount = quantity * price - fees
+            cash_txn = {
+                'date': date.isoformat(),
+                'symbol': 'CASH',
+                'transaction_type': 'withdrawal',
+                'quantity': cash_amount,
+                'price': 1.0,
+                'amount': -cash_amount,
+                'fees': 0.0,
+                'notes': f'Auto-withdrawal of {symbol} sale proceeds'
+            }
+            transactions_to_save.append(cash_txn)
+        elif txn_type == 'dividend':
+            # For dividend: withdraw the dividend cash
+            cash_amount = quantity * price
+            cash_txn = {
+                'date': date.isoformat(),
+                'symbol': 'CASH',
+                'transaction_type': 'withdrawal',
+                'quantity': cash_amount,
+                'price': 1.0,
+                'amount': -cash_amount,
+                'fees': 0.0,
+                'notes': f'Auto-withdrawal of {symbol} dividend'
+            }
+            transactions_to_save.append(cash_txn)
+
+        database.save_transactions(account_id, transactions_to_save)
         database.get_or_create_portfolio(account_id)
 
         return {
             "success": True,
-            "message": "Transaction added successfully",
-            "transaction": txn_data
+            "message": f"Transaction added successfully (with {len(transactions_to_save)} total transactions)",
+            "transaction": txn_data,
+            "auto_cash_transactions": len(transactions_to_save) - 1
         }
 
     except HTTPException:
@@ -531,8 +628,8 @@ def _calculate_portfolio_from_transactions(account_id: str, transactions_data: L
         elif txn_type == 'withdrawal':
             cash_balance += txn['amount']  # amount is already negative
 
-    # Get current prices for all symbols
-    symbols = [sym for sym, data in holdings_dict.items() if data['quantity'] > 0]
+    # Get current prices for all symbols (exclude CASH placeholder)
+    symbols = [sym for sym, data in holdings_dict.items() if data['quantity'] > 0 and sym != 'CASH']
     current_prices = market_data_service.get_current_prices(symbols) if symbols else {}
 
     # Create holdings list
@@ -540,7 +637,7 @@ def _calculate_portfolio_from_transactions(account_id: str, transactions_data: L
     total_value = 0.0
 
     for symbol, data in holdings_dict.items():
-        if data['quantity'] > 0:  # Only include positions we still hold
+        if data['quantity'] > 0 and symbol != 'CASH':  # Only include positions we still hold (exclude CASH)
             current_price = current_prices.get(symbol, 0.0)
             market_value = data['quantity'] * current_price
 
