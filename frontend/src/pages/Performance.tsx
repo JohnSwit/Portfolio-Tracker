@@ -44,6 +44,18 @@ export default function Performance() {
         case '1Y':
           startDate.setFullYear(startDate.getFullYear() - 1)
           break
+        case '2Y':
+          startDate.setFullYear(startDate.getFullYear() - 2)
+          break
+        case '3Y':
+          startDate.setFullYear(startDate.getFullYear() - 3)
+          break
+        case '4Y':
+          startDate.setFullYear(startDate.getFullYear() - 4)
+          break
+        case '5Y':
+          startDate.setFullYear(startDate.getFullYear() - 5)
+          break
         case 'YTD':
           startDate.setMonth(0)
           startDate.setDate(1)
@@ -96,8 +108,8 @@ export default function Performance() {
         </div>
 
         {/* Period Selector */}
-        <div className="flex gap-2">
-          {['1M', '3M', '6M', '1Y', 'YTD'].map((p) => (
+        <div className="flex gap-2 flex-wrap">
+          {['1M', '3M', '6M', '1Y', '2Y', '3Y', '4Y', '5Y', 'YTD'].map((p) => (
             <button
               key={p}
               onClick={() => setPeriod(p)}
