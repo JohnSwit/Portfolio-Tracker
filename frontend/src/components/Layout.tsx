@@ -1,6 +1,6 @@
 import { ReactNode } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { BarChart3, TrendingUp, AlertTriangle, PieChart } from 'lucide-react'
+import { BarChart3, TrendingUp, AlertTriangle, PieChart, Upload } from 'lucide-react'
 
 interface LayoutProps {
   children: ReactNode
@@ -14,6 +14,7 @@ export default function Layout({ children }: LayoutProps) {
     { name: 'Performance', path: '/performance', icon: TrendingUp },
     { name: 'Risk', path: '/risk', icon: AlertTriangle },
     { name: 'Holdings', path: '/holdings', icon: PieChart },
+    { name: 'Import Data', path: '/import', icon: Upload },
   ]
 
   return (
