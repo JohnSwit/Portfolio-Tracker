@@ -1,5 +1,6 @@
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
@@ -9,13 +10,15 @@ from dotenv import load_dotenv
 
 from models.portfolio import (
     Portfolio, PerformanceMetrics, AttributionResult,
-    RiskMetrics, HoldingsAnalysis, StressTestScenario, StressTestResult
+    RiskMetrics, HoldingsAnalysis, StressTestScenario, StressTestResult, Holding, Transaction
 )
 from services.schwab_client import schwab_client, SCHWAB_AVAILABLE
 from services.performance import performance_service
 from services.risk import risk_service, STRESS_SCENARIOS
 from services.holdings import holdings_service
 from services.market_data import market_data_service
+from services.csv_parser import csv_parser
+import database
 
 # Load environment variables
 load_dotenv()
@@ -90,13 +93,22 @@ async def get_accounts():
 @app.get("/api/portfolio/{account_id}", response_model=Portfolio)
 async def get_portfolio(account_id: str):
     """Get portfolio holdings for an account"""
-    if not SCHWAB_AVAILABLE:
+    try:
+        # Try to get transactions from database first
+        db_transactions = database.get_transactions(account_id)
+
+        if db_transactions:
+            # Calculate portfolio from transactions
+            return _calculate_portfolio_from_transactions(account_id, db_transactions)
+
+        # Fall back to Schwab API
+        if SCHWAB_AVAILABLE:
+            portfolio = schwab_client.get_portfolio(account_id)
+            return portfolio
+
         # Return mock data for development/testing
         return _get_mock_portfolio(account_id)
 
-    try:
-        portfolio = schwab_client.get_portfolio(account_id)
-        return portfolio
     except Exception as e:
         logger.error(f"Error fetching portfolio: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -112,12 +124,38 @@ async def get_transactions(
         end_date = datetime.now(timezone.utc)
         start_date = end_date - timedelta(days=days)
 
+        # Try database first
+        db_transactions = database.get_transactions(
+            account_id,
+            start_date.isoformat(),
+            end_date.isoformat()
+        )
+
+        if db_transactions:
+            # Convert to Transaction objects
+            transactions = [
+                Transaction(
+                    date=datetime.fromisoformat(t['date']),
+                    symbol=t['symbol'],
+                    transaction_type=t['transaction_type'],
+                    quantity=t['quantity'],
+                    price=t['price'],
+                    amount=t['amount'],
+                    fees=t['fees'],
+                    notes=t.get('notes', '')
+                )
+                for t in db_transactions
+            ]
+            return {"transactions": transactions}
+
+        # Fall back to Schwab API
         if SCHWAB_AVAILABLE:
             transactions = schwab_client.get_transactions(account_id, start_date, end_date)
-        else:
-            transactions = []  # Mock empty transactions
+            return {"transactions": transactions}
 
-        return {"transactions": transactions}
+        # Return empty for mock data
+        return {"transactions": []}
+
     except Exception as e:
         logger.error(f"Error fetching transactions: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -276,7 +314,170 @@ async def get_stock_info(symbol: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# CSV Import Endpoints
+@app.post("/api/upload-csv/{account_id}")
+async def upload_csv(account_id: str, file: UploadFile = File(...)):
+    """Upload CSV file with transactions"""
+    try:
+        # Read file content
+        content = await file.read()
+        file_content = content.decode('utf-8')
+
+        # Parse CSV
+        transactions = csv_parser.parse_transactions_csv(file_content)
+
+        # Save to database
+        inserted = database.save_transactions(account_id, transactions)
+
+        # Create or update portfolio record
+        database.get_or_create_portfolio(account_id, f"Portfolio {account_id}")
+
+        return {
+            "success": True,
+            "transactions_imported": inserted,
+            "message": f"Successfully imported {inserted} transactions"
+        }
+
+    except ValueError as e:
+        logger.error(f"CSV validation error: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error uploading CSV: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/download-template")
+async def download_template():
+    """Download CSV template file"""
+    template = csv_parser.generate_template_csv()
+    return Response(
+        content=template,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=transactions_template.csv"}
+    )
+
+
+@app.delete("/api/transactions/{account_id}")
+async def delete_transactions(account_id: str):
+    """Delete all transactions for an account"""
+    try:
+        deleted = database.delete_all_transactions(account_id)
+        return {
+            "success": True,
+            "transactions_deleted": deleted,
+            "message": f"Deleted {deleted} transactions"
+        }
+    except Exception as e:
+        logger.error(f"Error deleting transactions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Helper functions
+def _calculate_portfolio_from_transactions(account_id: str, transactions_data: List[dict]) -> Portfolio:
+    """Calculate current portfolio holdings from transaction history"""
+    from collections import defaultdict
+
+    # Build holdings from transactions
+    holdings_dict = defaultdict(lambda: {'quantity': 0.0, 'cost_basis': 0.0})
+    cash_balance = 0.0
+    inception_date = None
+
+    for txn in transactions_data:
+        symbol = txn['symbol']
+        txn_type = txn['transaction_type']
+        quantity = txn['quantity']
+        price = txn['price']
+        fees = txn['fees']
+        txn_date = datetime.fromisoformat(txn['date'])
+
+        if inception_date is None or txn_date < inception_date:
+            inception_date = txn_date
+
+        if txn_type == 'buy':
+            holdings_dict[symbol]['quantity'] += quantity
+            holdings_dict[symbol]['cost_basis'] += (quantity * price + fees)
+            cash_balance -= (quantity * price + fees)
+        elif txn_type == 'sell':
+            holdings_dict[symbol]['quantity'] -= quantity
+            # Reduce cost basis proportionally
+            if holdings_dict[symbol]['quantity'] > 0:
+                cost_per_share = holdings_dict[symbol]['cost_basis'] / (holdings_dict[symbol]['quantity'] + quantity)
+                holdings_dict[symbol]['cost_basis'] -= (quantity * cost_per_share)
+            else:
+                holdings_dict[symbol]['cost_basis'] = 0
+            cash_balance += (quantity * price - fees)
+        elif txn_type == 'dividend':
+            cash_balance += txn['amount']
+        elif txn_type == 'deposit':
+            cash_balance += txn['amount']
+        elif txn_type == 'withdrawal':
+            cash_balance += txn['amount']  # amount is already negative
+
+    # Get current prices for all symbols
+    symbols = [sym for sym, data in holdings_dict.items() if data['quantity'] > 0]
+    current_prices = market_data_service.get_current_prices(symbols) if symbols else {}
+
+    # Create holdings list
+    holdings = []
+    total_value = 0.0
+
+    for symbol, data in holdings_dict.items():
+        if data['quantity'] > 0:  # Only include positions we still hold
+            current_price = current_prices.get(symbol, 0.0)
+            market_value = data['quantity'] * current_price
+
+            # Get stock info for additional data
+            try:
+                info = market_data_service.get_stock_info(symbol)
+                sector = info.get('sector')
+                industry = info.get('industry')
+                country = info.get('country')
+                market_cap = info.get('market_cap')
+                pe_ratio = info.get('pe_ratio')
+                pb_ratio = info.get('pb_ratio')
+                beta = info.get('beta')
+            except:
+                sector = None
+                industry = None
+                country = None
+                market_cap = None
+                pe_ratio = None
+                pb_ratio = None
+                beta = None
+
+            holding = Holding(
+                symbol=symbol,
+                quantity=data['quantity'],
+                cost_basis=data['cost_basis'],
+                current_price=current_price,
+                market_value=market_value,
+                sector=sector,
+                industry=industry,
+                country=country,
+                asset_class='equity',
+                market_cap=market_cap,
+                pe_ratio=pe_ratio,
+                pb_ratio=pb_ratio,
+                beta=beta
+            )
+            holdings.append(holding)
+            total_value += market_value
+
+    # Get portfolio info from database
+    portfolio_info = database.get_or_create_portfolio(account_id)
+
+    return Portfolio(
+        account_id=account_id,
+        account_name=portfolio_info['account_name'],
+        holdings=holdings,
+        transactions=[],
+        cash_balance=cash_balance,
+        total_value=total_value + cash_balance,
+        inception_date=inception_date or datetime.now(timezone.utc),
+        last_updated=datetime.now(timezone.utc)
+    )
+
+
 def _get_mock_portfolio(account_id: str) -> Portfolio:
     """Generate mock portfolio for testing"""
     from models.portfolio import Holding
