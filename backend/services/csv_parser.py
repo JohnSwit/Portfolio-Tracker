@@ -3,6 +3,7 @@ import io
 from datetime import datetime
 from typing import List, Dict
 import logging
+from services.ticker_validator import ticker_validator
 
 logger = logging.getLogger(__name__)
 
@@ -52,11 +53,20 @@ class CSVParser:
                 except ValueError as e:
                     raise ValueError(f"Row {row_num}: {str(e)}")
 
-                # Parse transaction type
+                # Validate and clean symbol
+                symbol = row['symbol'].strip().upper()
+
+                # For stock transactions, validate ticker
                 txn_type = row['type'].strip().lower()
                 valid_types = ['buy', 'sell', 'dividend', 'split', 'deposit', 'withdrawal']
                 if txn_type not in valid_types:
                     raise ValueError(f"Row {row_num}: Invalid transaction type '{txn_type}'. Must be one of: {', '.join(valid_types)}")
+
+                # Validate ticker for stock transactions (not for cash deposits/withdrawals)
+                if txn_type in ['buy', 'sell', 'dividend', 'split']:
+                    validation_result = ticker_validator.validate_ticker(symbol)
+                    if not validation_result['valid']:
+                        raise ValueError(f"Row {row_num}: {validation_result['error']}")
 
                 # Parse numeric fields
                 try:
@@ -90,7 +100,7 @@ class CSVParser:
 
                 transaction = {
                     'date': date.isoformat(),
-                    'symbol': row['symbol'].strip().upper(),
+                    'symbol': symbol,
                     'transaction_type': txn_type,
                     'quantity': quantity,
                     'price': price,

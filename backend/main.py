@@ -18,6 +18,7 @@ from services.risk import risk_service, STRESS_SCENARIOS
 from services.holdings import holdings_service
 from services.market_data import market_data_service
 from services.csv_parser import csv_parser
+from services.ticker_validator import ticker_validator
 import database
 
 # Load environment variables
@@ -369,6 +370,122 @@ async def delete_transactions(account_id: str):
         }
     except Exception as e:
         logger.error(f"Error deleting transactions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/transaction/{account_id}")
+async def add_transaction(account_id: str, transaction: dict):
+    """Add a single transaction manually"""
+    try:
+        # Validate required fields
+        required_fields = ['date', 'symbol', 'type', 'quantity', 'price']
+        missing = [f for f in required_fields if f not in transaction]
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Missing required fields: {', '.join(missing)}"
+            )
+
+        # Validate ticker symbol for stock transactions
+        txn_type = transaction['type'].lower()
+        symbol = transaction['symbol'].strip().upper()
+
+        if txn_type in ['buy', 'sell', 'dividend', 'split']:
+            validation = ticker_validator.validate_ticker(symbol)
+            if not validation['valid']:
+                raise HTTPException(status_code=400, detail=validation['error'])
+
+        # Parse and validate date
+        try:
+            date = datetime.fromisoformat(transaction['date'])
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+        # Validate numeric fields
+        try:
+            quantity = float(transaction['quantity'])
+            price = float(transaction['price'])
+            fees = float(transaction.get('fees', 0))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid numeric values")
+
+        if quantity <= 0:
+            raise HTTPException(status_code=400, detail="Quantity must be positive")
+        if price < 0:
+            raise HTTPException(status_code=400, detail="Price cannot be negative")
+
+        # Calculate amount
+        if txn_type == 'buy':
+            amount = -(quantity * price + fees)
+        elif txn_type == 'sell':
+            amount = quantity * price - fees
+        elif txn_type == 'dividend':
+            amount = quantity * price
+        elif txn_type == 'deposit':
+            amount = quantity * price
+        elif txn_type == 'withdrawal':
+            amount = -(quantity * price)
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid transaction type: {txn_type}"
+            )
+
+        # Save to database
+        txn_data = {
+            'date': date.isoformat(),
+            'symbol': symbol,
+            'transaction_type': txn_type,
+            'quantity': quantity,
+            'price': price,
+            'amount': amount,
+            'fees': fees,
+            'notes': transaction.get('notes', '')
+        }
+
+        database.save_transactions(account_id, [txn_data])
+        database.get_or_create_portfolio(account_id)
+
+        return {
+            "success": True,
+            "message": "Transaction added successfully",
+            "transaction": txn_data
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error adding transaction: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/transaction-list/{account_id}")
+async def get_transaction_list(account_id: str, limit: int = Query(default=100, le=500)):
+    """Get list of all transactions for display"""
+    try:
+        transactions = database.get_transactions(account_id)
+
+        # Limit results
+        transactions = transactions[:limit] if limit else transactions
+
+        return {
+            "success": True,
+            "count": len(transactions),
+            "transactions": transactions
+        }
+    except Exception as e:
+        logger.error(f"Error fetching transaction list: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/validate-ticker/{symbol}")
+async def validate_ticker(symbol: str):
+    """Validate a ticker symbol"""
+    try:
+        result = ticker_validator.validate_ticker(symbol)
+        return result
+    except Exception as e:
+        logger.error(f"Error validating ticker: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
