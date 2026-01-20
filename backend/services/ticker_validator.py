@@ -28,34 +28,52 @@ class TickerValidator:
             ticker = yf.Ticker(symbol)
             info = ticker.info
 
-            # Check if it's a valid stock
-            # Valid stocks should have basic info like longName or shortName
-            if not info or len(info) < 5:
+            # Check if we got any info at all
+            if not info:
                 return {
                     'valid': False,
                     'symbol': symbol,
-                    'error': f"Ticker '{symbol}' not found or invalid"
+                    'error': f"Ticker '{symbol}' not found"
                 }
 
-            # Additional validation - check for key fields
-            name = info.get('longName') or info.get('shortName')
-            if not name:
-                return {
-                    'valid': False,
-                    'symbol': symbol,
-                    'error': f"Ticker '{symbol}' appears to be invalid"
-                }
+            # Try to get name from multiple possible fields
+            name = (info.get('longName') or
+                   info.get('shortName') or
+                   info.get('name') or
+                   info.get('symbol', symbol))
 
             # Check if it's actually a stock (not index, currency, etc.)
+            # Some tickers may not have quoteType, so we'll be lenient
             quote_type = info.get('quoteType', '').upper()
-            valid_types = ['EQUITY', 'ETF', 'MUTUALFUND']
+            valid_types = ['EQUITY', 'ETF', 'MUTUALFUND', 'STOCK']
 
-            if quote_type and quote_type not in valid_types:
+            # Reject known invalid types, but allow empty quoteType
+            invalid_types = ['INDEX', 'CURRENCY', 'CRYPTOCURRENCY', 'FUTURE', 'OPTION']
+            if quote_type and quote_type in invalid_types:
                 return {
                     'valid': False,
                     'symbol': symbol,
                     'error': f"'{symbol}' is a {quote_type}, not a stock/ETF"
                 }
+
+            # If quoteType exists and is not in valid types, but also not in invalid types,
+            # do an additional check: see if we can get historical data
+            if quote_type and quote_type not in valid_types:
+                # Try to get recent price data as a fallback validation
+                try:
+                    hist = ticker.history(period="5d")
+                    if hist.empty:
+                        return {
+                            'valid': False,
+                            'symbol': symbol,
+                            'error': f"No price data available for '{symbol}'"
+                        }
+                except:
+                    return {
+                        'valid': False,
+                        'symbol': symbol,
+                        'error': f"'{symbol}' appears to be invalid (type: {quote_type})"
+                    }
 
             logger.info(f"Ticker '{symbol}' validated successfully: {name}")
 
