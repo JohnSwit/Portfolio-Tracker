@@ -172,6 +172,15 @@ async def calculate_performance(
     try:
         portfolio = await get_portfolio(account_id)
 
+        # DEBUG: Print to console
+        print(f"\n{'='*60}")
+        print(f"PERFORMANCE CALCULATION - Date range from frontend:")
+        print(f"  Start: {date_range.start_date}")
+        print(f"  End: {date_range.end_date}")
+        print(f"  Benchmark: {date_range.benchmark}")
+        print(f"Portfolio: Total=${portfolio.total_value:,.2f}, Inception={portfolio.inception_date}")
+        print(f"{'='*60}")
+
         # Fetch ALL transactions from inception, not just the date range
         # Performance calculations need all historical transactions to reconstruct holdings
         if portfolio.inception_date:
@@ -188,6 +197,8 @@ async def calculate_performance(
             days=days_since_inception
         )
         transactions = transactions_response.get("transactions", [])
+
+        print(f"Transactions: Fetched {len(transactions)} (looking back {days_since_inception} days)")
 
         logger.info(f"Performance endpoint called:")
         logger.info(f"  Account: {account_id}")

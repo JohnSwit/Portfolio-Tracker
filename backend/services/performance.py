@@ -182,13 +182,19 @@ class PerformanceService:
             )
             ending_value = portfolio.total_value or 0.0
 
-            # Debug logging
-            logger.info(f"Performance calculation:")
-            logger.info(f"  Period: {start_date.date()} to {end_date.date()}")
-            logger.info(f"  Beginning value: ${beginning_value:,.2f}")
-            logger.info(f"  Ending value: ${ending_value:,.2f}")
-            logger.info(f"  Portfolio inception: {portfolio.inception_date}")
-            logger.info(f"  Transactions count: {len(transactions)}")
+            # Debug logging - print to console
+            print(f"\n{'-'*60}")
+            print(f"PERFORMANCE SERVICE CALCULATION:")
+            print(f"  Period: {start_date.date()} to {end_date.date()}")
+            print(f"  Beginning value: ${beginning_value:,.2f}")
+            print(f"  Ending value: ${ending_value:,.2f}")
+            print(f"  Portfolio inception: {portfolio.inception_date}")
+            print(f"  Transactions count: {len(transactions)}")
+            if beginning_value == 0:
+                print(f"  ⚠️  WARNING: Beginning value is ZERO!")
+            if ending_value == 0:
+                print(f"  ⚠️  WARNING: Ending value is ZERO!")
+            print(f"{'-'*60}")
 
             # Time-weighted return
             portfolio_values, cash_flows = self._build_value_series(
@@ -441,8 +447,8 @@ class PerformanceService:
         # Reconstruct holdings at the given date (similar to _calculate_portfolio_from_transactions)
         holdings_dict = defaultdict(lambda: {'quantity': 0.0, 'cost_basis': 0.0})
 
-        logger.info(f"Reconstructing holdings at {date.date()}:")
-        logger.info(f"  Total transactions to process: {len(transactions)}")
+        print(f"\n>>> Reconstructing holdings at {date.date()}...")
+        print(f"    Total transactions: {len(transactions)}")
 
         transactions_processed = 0
         transactions_skipped_cash = 0
@@ -467,7 +473,6 @@ class PerformanceService:
             if txn.transaction_type == 'buy':
                 holdings_dict[symbol]['quantity'] += txn.quantity
                 holdings_dict[symbol]['cost_basis'] += abs(txn.amount)
-                logger.info(f"  BUY {symbol}: +{txn.quantity} shares @ {txn_date.date()}")
             elif txn.transaction_type == 'sell':
                 holdings_dict[symbol]['quantity'] -= txn.quantity
                 # Reduce cost basis proportionally
@@ -476,24 +481,22 @@ class PerformanceService:
                     holdings_dict[symbol]['cost_basis'] -= (txn.quantity * cost_per_share)
                 else:
                     holdings_dict[symbol]['cost_basis'] = 0
-                logger.info(f"  SELL {symbol}: -{txn.quantity} shares @ {txn_date.date()}")
 
-        logger.info(f"  Transactions processed: {transactions_processed}")
-        logger.info(f"  Transactions skipped (CASH): {transactions_skipped_cash}")
-        logger.info(f"  Transactions skipped (future): {transactions_skipped_future}")
+        print(f"    Processed: {transactions_processed}, Skipped CASH: {transactions_skipped_cash}, Skipped future: {transactions_skipped_future}")
 
         # Get prices - use current prices as approximation (in production, would use historical prices)
         symbols = [sym for sym, data in holdings_dict.items() if data['quantity'] > 0]
         if not symbols:
-            logger.warning(f"No holdings found at {date.date()}")
+            print(f"    ⚠️  NO HOLDINGS FOUND - returning $0")
             return 0.0
+
+        print(f"    Holdings found: {len(symbols)} securities")
+        print(f"    Symbols: {', '.join(symbols)}")
 
         from services.market_data import market_data_service
         current_prices = market_data_service.get_current_prices(symbols)
 
-        logger.info(f"Calculating value at {date.date()}:")
-        logger.info(f"  Holdings: {symbols}")
-        logger.info(f"  Prices retrieved: {current_prices}")
+        print(f"    Prices fetched: {len([p for p in current_prices.values() if p and p > 0])} / {len(symbols)}")
 
         # Calculate market value, falling back to cost basis if price unavailable
         total_value = 0.0
@@ -503,14 +506,13 @@ class PerformanceService:
                 if price and price > 0:
                     # Use market price
                     value = data['quantity'] * price
-                    logger.info(f"  {symbol}: {data['quantity']} @ ${price:.2f} = ${value:,.2f}")
                     total_value += value
                 else:
                     # Fallback to cost basis if market price unavailable
-                    logger.warning(f"  {symbol}: No price available, using cost basis ${data['cost_basis']:,.2f}")
+                    print(f"    ⚠️  {symbol}: No price, using cost basis ${data['cost_basis']:,.2f}")
                     total_value += data['cost_basis']
 
-        logger.info(f"  Total value at {date.date()}: ${total_value:,.2f}")
+        print(f"    >>> Total value calculated: ${total_value:,.2f}\n")
         return max(total_value, 0.0)
 
     def _calculate_sector_attribution(
