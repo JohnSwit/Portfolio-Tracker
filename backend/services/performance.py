@@ -120,7 +120,10 @@ class PerformanceService:
                 return float(irr)
             except:
                 # If Newton's method fails, try simple approximation
-                return (ending_value - beginning_value) / beginning_value
+                if beginning_value > 0:
+                    return (ending_value - beginning_value) / beginning_value
+                else:
+                    return 0.0
 
         except Exception as e:
             logger.error(f"Error calculating MWR: {e}")
@@ -251,7 +254,14 @@ class PerformanceService:
             stock_returns = {}
             for symbol in symbols:
                 if len(symbols) == 1:
-                    prices = price_data['Close']
+                    # For single symbol, yfinance returns different structure
+                    if 'Close' in price_data.columns:
+                        prices = price_data['Close']
+                    else:
+                        prices = price_data
+                    # Ensure 1D series
+                    if hasattr(prices, 'squeeze'):
+                        prices = prices.squeeze()
                 else:
                     prices = price_data[symbol]['Close']
 
