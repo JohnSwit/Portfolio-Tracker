@@ -182,10 +182,23 @@ class PerformanceService:
             )
             ending_value = portfolio.total_value or 0.0
 
+            # Debug logging
+            logger.info(f"Performance calculation:")
+            logger.info(f"  Period: {start_date.date()} to {end_date.date()}")
+            logger.info(f"  Beginning value: ${beginning_value:,.2f}")
+            logger.info(f"  Ending value: ${ending_value:,.2f}")
+            logger.info(f"  Portfolio inception: {portfolio.inception_date}")
+            logger.info(f"  Transactions count: {len(transactions)}")
+
             # Time-weighted return
             portfolio_values, cash_flows = self._build_value_series(
                 portfolio, transactions, start_date, end_date
             )
+
+            logger.info(f"  Value series length: {len(portfolio_values)}")
+            logger.info(f"  Value series range: ${portfolio_values.min():,.2f} to ${portfolio_values.max():,.2f}")
+            logger.info(f"  Cash flows sum: ${cash_flows.sum():,.2f}")
+
             twr = self.calculate_twr(portfolio_values, cash_flows)
 
             # Money-weighted return (IRR)
@@ -451,10 +464,15 @@ class PerformanceService:
         # Get prices - use current prices as approximation (in production, would use historical prices)
         symbols = [sym for sym, data in holdings_dict.items() if data['quantity'] > 0]
         if not symbols:
+            logger.warning(f"No holdings found at {date.date()}")
             return 0.0
 
         from services.market_data import market_data_service
         current_prices = market_data_service.get_current_prices(symbols)
+
+        logger.info(f"Calculating value at {date.date()}:")
+        logger.info(f"  Holdings: {symbols}")
+        logger.info(f"  Prices retrieved: {current_prices}")
 
         # Calculate market value, falling back to cost basis if price unavailable
         total_value = 0.0
@@ -463,11 +481,15 @@ class PerformanceService:
                 price = current_prices.get(symbol)
                 if price and price > 0:
                     # Use market price
-                    total_value += data['quantity'] * price
+                    value = data['quantity'] * price
+                    logger.info(f"  {symbol}: {data['quantity']} @ ${price:.2f} = ${value:,.2f}")
+                    total_value += value
                 else:
                     # Fallback to cost basis if market price unavailable
+                    logger.warning(f"  {symbol}: No price available, using cost basis ${data['cost_basis']:,.2f}")
                     total_value += data['cost_basis']
 
+        logger.info(f"  Total value at {date.date()}: ${total_value:,.2f}")
         return max(total_value, 0.0)
 
     def _calculate_sector_attribution(
