@@ -164,7 +164,14 @@ class RiskService:
         returns_df = pd.DataFrame()
         for symbol in symbols:
             if len(symbols) == 1:
-                prices = price_data['Close']
+                # For single symbol, yfinance returns different structure
+                if 'Close' in price_data.columns:
+                    prices = price_data['Close']
+                else:
+                    prices = price_data
+                # Ensure 1D series
+                if hasattr(prices, 'squeeze'):
+                    prices = prices.squeeze()
             else:
                 prices = price_data[symbol]['Close']
 
