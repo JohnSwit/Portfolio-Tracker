@@ -321,7 +321,8 @@ class PerformanceService:
     ) -> Tuple[pd.Series, pd.Series]:
         """Build portfolio value and cash flow series"""
         # Simplified implementation - build daily value series
-        dates = pd.date_range(start=start_date, end=end_date, freq='D')
+        # Make dates timezone-aware to match benchmark data
+        dates = pd.date_range(start=start_date, end=end_date, freq='D', tz='UTC')
 
         # For now, use linear interpolation
         # In production, you'd calculate actual daily values
