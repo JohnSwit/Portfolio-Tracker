@@ -40,13 +40,20 @@ class PerformanceService:
 
             # Calculate sub-period returns
             df['prev_value'] = df['value'].shift(1)
-            df['return'] = (df['value'] - df['prev_value'] - df['flow']) / df['prev_value']
+            # Avoid division by zero
+            df['return'] = np.where(
+                df['prev_value'] > 0,
+                (df['value'] - df['prev_value'] - df['flow']) / df['prev_value'],
+                0
+            )
             df['return'] = df['return'].fillna(0)
+            # Replace inf and -inf with 0
+            df['return'] = df['return'].replace([np.inf, -np.inf], 0)
 
             # Link returns: (1 + r1) * (1 + r2) * ... - 1
             twr = (1 + df['return']).prod() - 1
 
-            return float(twr)
+            return float(twr) if not (pd.isna(twr) or np.isinf(twr)) else 0.0
 
         except Exception as e:
             logger.error(f"Error calculating TWR: {e}")
@@ -172,17 +179,26 @@ class PerformanceService:
                 end_date
             )
 
-            # Total return
-            total_return = (ending_value - beginning_value) / beginning_value if beginning_value > 0 else 0.0
+            # Total return - avoid division by zero
+            if beginning_value > 0:
+                total_return = (ending_value - beginning_value) / beginning_value
+            else:
+                total_return = 0.0
 
-            # Annualized return
+            # Annualized return - avoid division by zero and invalid exponentiation
             days = (end_date - start_date).days
             years = days / 365.0
-            annualized_return = ((1 + twr) ** (1 / years) - 1) if years > 0 else twr
+            if years > 0 and (1 + twr) > 0:
+                annualized_return = ((1 + twr) ** (1 / years) - 1)
+            else:
+                annualized_return = twr
 
             # Benchmark comparison
             benchmark_data = market_data_service.get_benchmark_data(benchmark, start_date, end_date)
-            benchmark_return = (benchmark_data.iloc[-1] - benchmark_data.iloc[0]) / benchmark_data.iloc[0]
+            if len(benchmark_data) > 0 and benchmark_data.iloc[0] != 0:
+                benchmark_return = (benchmark_data.iloc[-1] - benchmark_data.iloc[0]) / benchmark_data.iloc[0]
+            else:
+                benchmark_return = 0.0
 
             # Active return
             active_return = twr - benchmark_return
@@ -204,18 +220,25 @@ class PerformanceService:
 
             period_label = f"{start_date.date()} to {end_date.date()}"
 
+            # Handle NaN values to prevent JSON serialization errors
+            def safe_float(value):
+                """Convert NaN/inf to 0.0 for JSON serialization"""
+                if pd.isna(value) or np.isinf(value):
+                    return 0.0
+                return float(value)
+
             return PerformanceMetrics(
                 period=period_label,
                 start_date=start_date,
                 end_date=end_date,
-                twr=twr,
-                mwr=mwr,
-                total_return=total_return,
-                annualized_return=annualized_return,
-                benchmark_return=benchmark_return,
-                active_return=active_return,
-                tracking_error=tracking_error,
-                information_ratio=information_ratio
+                twr=safe_float(twr),
+                mwr=safe_float(mwr),
+                total_return=safe_float(total_return),
+                annualized_return=safe_float(annualized_return),
+                benchmark_return=safe_float(benchmark_return),
+                active_return=safe_float(active_return),
+                tracking_error=safe_float(tracking_error),
+                information_ratio=safe_float(information_ratio)
             )
 
         except Exception as e:
@@ -353,9 +376,15 @@ class PerformanceService:
         # Build cash flows
         cash_flows = pd.Series(0.0, index=dates)
         for txn in transactions:
-            if start_date <= txn.date <= end_date:
+            # Ensure txn.date is timezone-aware for comparison
+            txn_date = txn.date
+            if txn_date.tzinfo is None:
+                from datetime import timezone as dt_timezone
+                txn_date = txn_date.replace(tzinfo=dt_timezone.utc)
+
+            if start_date <= txn_date <= end_date:
                 if txn.transaction_type in ['buy', 'sell']:
-                    cash_flows[txn.date] = txn.amount if txn.transaction_type == 'sell' else -txn.amount
+                    cash_flows[txn_date] = txn.amount if txn.transaction_type == 'sell' else -txn.amount
 
         return values, cash_flows
 
@@ -366,18 +395,32 @@ class PerformanceService:
         date: datetime
     ) -> float:
         """Calculate portfolio value at a specific date"""
+        from datetime import timezone as dt_timezone
+
+        # Ensure date is timezone-aware
+        if date.tzinfo is None:
+            date = date.replace(tzinfo=dt_timezone.utc)
+
         # Simplified - in production, reconstruct holdings at that date
-        if portfolio.inception_date and date < portfolio.inception_date:
-            return 0.0
+        if portfolio.inception_date:
+            inception = portfolio.inception_date
+            if inception.tzinfo is None:
+                inception = inception.replace(tzinfo=dt_timezone.utc)
+            if date < inception:
+                return 0.0
 
         # Estimate based on transactions
         total = 0.0
         for txn in transactions:
-            if txn.date <= date:
+            txn_date = txn.date
+            if txn_date.tzinfo is None:
+                txn_date = txn_date.replace(tzinfo=dt_timezone.utc)
+
+            if txn_date <= date:
                 if txn.transaction_type == 'buy':
-                    total += txn.amount
+                    total += abs(txn.amount)  # amount is negative for buys
                 elif txn.transaction_type == 'sell':
-                    total -= txn.amount
+                    total -= abs(txn.amount)  # amount is positive for sells
 
         return max(total, 0.0)
 
