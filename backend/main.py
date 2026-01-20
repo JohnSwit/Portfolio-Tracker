@@ -175,7 +175,11 @@ async def calculate_performance(
         # Fetch ALL transactions from inception, not just the date range
         # Performance calculations need all historical transactions to reconstruct holdings
         if portfolio.inception_date:
-            days_since_inception = (datetime.now(timezone.utc) - portfolio.inception_date).days + 30  # Add buffer
+            # Normalize inception_date to UTC if it's timezone-naive
+            inception = portfolio.inception_date
+            if inception.tzinfo is None:
+                inception = inception.replace(tzinfo=timezone.utc)
+            days_since_inception = (datetime.now(timezone.utc) - inception).days + 30  # Add buffer
         else:
             days_since_inception = 3650  # Default to 10 years if no inception date
 
@@ -221,7 +225,11 @@ async def calculate_attribution(
 
         # Fetch ALL transactions from inception, not just the date range
         if portfolio.inception_date:
-            days_since_inception = (datetime.now(timezone.utc) - portfolio.inception_date).days + 30
+            # Normalize inception_date to UTC if it's timezone-naive
+            inception = portfolio.inception_date
+            if inception.tzinfo is None:
+                inception = inception.replace(tzinfo=timezone.utc)
+            days_since_inception = (datetime.now(timezone.utc) - inception).days + 30
         else:
             days_since_inception = 3650  # Default to 10 years
 
