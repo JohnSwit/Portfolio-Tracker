@@ -441,25 +441,46 @@ class PerformanceService:
         # Reconstruct holdings at the given date (similar to _calculate_portfolio_from_transactions)
         holdings_dict = defaultdict(lambda: {'quantity': 0.0, 'cost_basis': 0.0})
 
+        logger.info(f"Reconstructing holdings at {date.date()}:")
+        logger.info(f"  Total transactions to process: {len(transactions)}")
+
+        transactions_processed = 0
+        transactions_skipped_cash = 0
+        transactions_skipped_future = 0
+
         for txn in transactions:
             txn_date = self._normalize_to_utc(txn.date)
-            if txn_date <= date:
-                symbol = txn.symbol
-                # Skip CASH placeholder transactions
-                if symbol == 'CASH':
-                    continue
 
-                if txn.transaction_type == 'buy':
-                    holdings_dict[symbol]['quantity'] += txn.quantity
-                    holdings_dict[symbol]['cost_basis'] += abs(txn.amount)
-                elif txn.transaction_type == 'sell':
-                    holdings_dict[symbol]['quantity'] -= txn.quantity
-                    # Reduce cost basis proportionally
-                    if holdings_dict[symbol]['quantity'] > 0:
-                        cost_per_share = holdings_dict[symbol]['cost_basis'] / (holdings_dict[symbol]['quantity'] + txn.quantity)
-                        holdings_dict[symbol]['cost_basis'] -= (txn.quantity * cost_per_share)
-                    else:
-                        holdings_dict[symbol]['cost_basis'] = 0
+            # Skip CASH placeholder transactions
+            if txn.symbol == 'CASH':
+                transactions_skipped_cash += 1
+                continue
+
+            # Check date
+            if txn_date > date:
+                transactions_skipped_future += 1
+                continue
+
+            transactions_processed += 1
+            symbol = txn.symbol
+
+            if txn.transaction_type == 'buy':
+                holdings_dict[symbol]['quantity'] += txn.quantity
+                holdings_dict[symbol]['cost_basis'] += abs(txn.amount)
+                logger.info(f"  BUY {symbol}: +{txn.quantity} shares @ {txn_date.date()}")
+            elif txn.transaction_type == 'sell':
+                holdings_dict[symbol]['quantity'] -= txn.quantity
+                # Reduce cost basis proportionally
+                if holdings_dict[symbol]['quantity'] > 0:
+                    cost_per_share = holdings_dict[symbol]['cost_basis'] / (holdings_dict[symbol]['quantity'] + txn.quantity)
+                    holdings_dict[symbol]['cost_basis'] -= (txn.quantity * cost_per_share)
+                else:
+                    holdings_dict[symbol]['cost_basis'] = 0
+                logger.info(f"  SELL {symbol}: -{txn.quantity} shares @ {txn_date.date()}")
+
+        logger.info(f"  Transactions processed: {transactions_processed}")
+        logger.info(f"  Transactions skipped (CASH): {transactions_skipped_cash}")
+        logger.info(f"  Transactions skipped (future): {transactions_skipped_future}")
 
         # Get prices - use current prices as approximation (in production, would use historical prices)
         symbols = [sym for sym, data in holdings_dict.items() if data['quantity'] > 0]

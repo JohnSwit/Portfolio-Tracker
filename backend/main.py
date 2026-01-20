@@ -177,6 +177,15 @@ async def calculate_performance(
         )
         transactions = transactions_response.get("transactions", [])
 
+        logger.info(f"Performance endpoint called:")
+        logger.info(f"  Account: {account_id}")
+        logger.info(f"  Portfolio total_value: ${portfolio.total_value:,.2f}")
+        logger.info(f"  Portfolio holdings count: {len(portfolio.holdings)}")
+        logger.info(f"  Transactions retrieved: {len(transactions)}")
+        if transactions:
+            logger.info(f"  First transaction: {transactions[0].symbol} on {transactions[0].date}")
+            logger.info(f"  Last transaction: {transactions[-1].symbol} on {transactions[-1].date}")
+
         end_date = date_range.end_date or datetime.now(timezone.utc)
 
         metrics = performance_service.calculate_performance_metrics(
