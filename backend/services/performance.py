@@ -321,8 +321,22 @@ class PerformanceService:
     ) -> Tuple[pd.Series, pd.Series]:
         """Build portfolio value and cash flow series"""
         # Simplified implementation - build daily value series
-        # Make dates timezone-aware to match benchmark data
-        dates = pd.date_range(start=start_date, end=end_date, freq='D', tz='UTC')
+        # Normalize dates to UTC timezone to avoid timezone conflicts
+        from datetime import timezone as dt_timezone
+
+        # Convert to UTC if timezone-aware, otherwise assume UTC
+        if start_date.tzinfo is not None:
+            start_date = start_date.astimezone(dt_timezone.utc)
+        else:
+            start_date = start_date.replace(tzinfo=dt_timezone.utc)
+
+        if end_date.tzinfo is not None:
+            end_date = end_date.astimezone(dt_timezone.utc)
+        else:
+            end_date = end_date.replace(tzinfo=dt_timezone.utc)
+
+        # Create date range (will infer UTC from the input dates)
+        dates = pd.date_range(start=start_date, end=end_date, freq='D')
 
         # For now, use linear interpolation
         # In production, you'd calculate actual daily values
