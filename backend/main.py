@@ -386,11 +386,12 @@ async def add_transaction(account_id: str, transaction: dict):
                 detail=f"Missing required fields: {', '.join(missing)}"
             )
 
-        # Validate ticker symbol for stock transactions
+        # Validate ticker symbol for stock transactions (unless skip_validation is true)
         txn_type = transaction['type'].lower()
         symbol = transaction['symbol'].strip().upper()
+        skip_validation = transaction.get('skip_validation', False)
 
-        if txn_type in ['buy', 'sell', 'dividend', 'split']:
+        if txn_type in ['buy', 'sell', 'dividend', 'split'] and not skip_validation:
             validation = ticker_validator.validate_ticker(symbol)
             if not validation['valid']:
                 raise HTTPException(status_code=400, detail=validation['error'])
