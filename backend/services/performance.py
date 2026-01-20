@@ -374,22 +374,33 @@ class PerformanceService:
         # Create date range in UTC
         dates = pd.date_range(start=start_date, end=end_date, freq='D')
 
-        # For now, use linear interpolation
-        # In production, you'd calculate actual daily values
+        # Calculate beginning and ending values
         beginning_value = self._calculate_portfolio_value_at_date(
             portfolio, transactions, start_date
         )
-        ending_value = portfolio.total_value or 0.0
+        ending_value = portfolio.total_value
 
+        # Ensure ending value is valid
+        if not ending_value or ending_value <= 0:
+            logger.warning(f"Invalid ending portfolio value: {ending_value}, using cost basis calculation")
+            ending_value = self._calculate_portfolio_value_at_date(
+                portfolio, transactions, end_date
+            )
+
+        # Use linear interpolation for daily values
+        # Note: This is a simplification. True daily values would require daily price data
         values = pd.Series(
             np.linspace(beginning_value, ending_value, len(dates)),
             index=dates
         )
 
-        # Build cash flows
+        # Build cash flows - only include actual buy/sell transactions (not auto CASH transactions)
         cash_flows = pd.Series(0.0, index=dates)
         for txn in transactions:
             txn_date = self._normalize_to_utc(txn.date)
+            # Skip auto-generated CASH transactions
+            if txn.symbol == 'CASH':
+                continue
             if start_date <= txn_date <= end_date:
                 if txn.transaction_type in ['buy', 'sell']:
                     cash_flows[txn_date] = txn.amount if txn.transaction_type == 'sell' else -txn.amount
@@ -402,27 +413,62 @@ class PerformanceService:
         transactions: List[Transaction],
         date: datetime
     ) -> float:
-        """Calculate portfolio value at a specific date"""
+        """Calculate portfolio value at a specific date by reconstructing holdings and using historical/current prices"""
+        from collections import defaultdict
+
         # Normalize date to UTC
         date = self._normalize_to_utc(date)
 
-        # Simplified - in production, reconstruct holdings at that date
+        # Check inception date
         if portfolio.inception_date:
             inception = self._normalize_to_utc(portfolio.inception_date)
             if date < inception:
                 return 0.0
 
-        # Estimate based on transactions
-        total = 0.0
+        # Reconstruct holdings at the given date (similar to _calculate_portfolio_from_transactions)
+        holdings_dict = defaultdict(lambda: {'quantity': 0.0, 'cost_basis': 0.0})
+
         for txn in transactions:
             txn_date = self._normalize_to_utc(txn.date)
             if txn_date <= date:
-                if txn.transaction_type == 'buy':
-                    total += abs(txn.amount)  # amount is negative for buys
-                elif txn.transaction_type == 'sell':
-                    total -= abs(txn.amount)  # amount is positive for sells
+                symbol = txn.symbol
+                # Skip CASH placeholder transactions
+                if symbol == 'CASH':
+                    continue
 
-        return max(total, 0.0)
+                if txn.transaction_type == 'buy':
+                    holdings_dict[symbol]['quantity'] += txn.quantity
+                    holdings_dict[symbol]['cost_basis'] += abs(txn.amount)
+                elif txn.transaction_type == 'sell':
+                    holdings_dict[symbol]['quantity'] -= txn.quantity
+                    # Reduce cost basis proportionally
+                    if holdings_dict[symbol]['quantity'] > 0:
+                        cost_per_share = holdings_dict[symbol]['cost_basis'] / (holdings_dict[symbol]['quantity'] + txn.quantity)
+                        holdings_dict[symbol]['cost_basis'] -= (txn.quantity * cost_per_share)
+                    else:
+                        holdings_dict[symbol]['cost_basis'] = 0
+
+        # Get prices - use current prices as approximation (in production, would use historical prices)
+        symbols = [sym for sym, data in holdings_dict.items() if data['quantity'] > 0]
+        if not symbols:
+            return 0.0
+
+        from services.market_data import market_data_service
+        current_prices = market_data_service.get_current_prices(symbols)
+
+        # Calculate market value, falling back to cost basis if price unavailable
+        total_value = 0.0
+        for symbol, data in holdings_dict.items():
+            if data['quantity'] > 0:
+                price = current_prices.get(symbol)
+                if price and price > 0:
+                    # Use market price
+                    total_value += data['quantity'] * price
+                else:
+                    # Fallback to cost basis if market price unavailable
+                    total_value += data['cost_basis']
+
+        return max(total_value, 0.0)
 
     def _calculate_sector_attribution(
         self,

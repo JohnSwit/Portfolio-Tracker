@@ -638,7 +638,13 @@ def _calculate_portfolio_from_transactions(account_id: str, transactions_data: L
 
     for symbol, data in holdings_dict.items():
         if data['quantity'] > 0 and symbol != 'CASH':  # Only include positions we still hold (exclude CASH)
-            current_price = current_prices.get(symbol, 0.0)
+            current_price = current_prices.get(symbol)
+
+            # If market price is unavailable or invalid, fall back to cost basis per share
+            if not current_price or current_price <= 0:
+                current_price = data['cost_basis'] / data['quantity'] if data['quantity'] > 0 else 0.0
+                logger.warning(f"Market price unavailable for {symbol}, using cost basis per share: ${current_price:.2f}")
+
             market_value = data['quantity'] * current_price
 
             # Get stock info for additional data
