@@ -14,6 +14,15 @@ logger = logging.getLogger(__name__)
 class PerformanceService:
     """Service for calculating portfolio performance metrics"""
 
+    @staticmethod
+    def _normalize_to_utc(dt: datetime) -> datetime:
+        """Normalize datetime to timezone-aware UTC"""
+        from datetime import timezone as dt_timezone
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=dt_timezone.utc)
+        else:
+            return dt.astimezone(dt_timezone.utc)
+
     def calculate_twr(
         self,
         portfolio_values: pd.Series,
@@ -83,6 +92,10 @@ class PerformanceService:
             Money-weighted return (IRR) as decimal
         """
         try:
+            # Normalize dates to UTC timezone
+            start_date = self._normalize_to_utc(start_date)
+            end_date = self._normalize_to_utc(end_date)
+
             # Build cash flow timeline
             total_days = (end_date - start_date).days
             if total_days == 0:
@@ -94,8 +107,9 @@ class PerformanceService:
 
             # Add transactions
             for txn in transactions:
-                if start_date <= txn.date <= end_date:
-                    days_from_start = (txn.date - start_date).days
+                txn_date = self._normalize_to_utc(txn.date)
+                if start_date <= txn_date <= end_date:
+                    days_from_start = (txn_date - start_date).days
 
                     if txn.transaction_type == 'buy':
                         cash_flows.append(-txn.amount)  # Outflow
@@ -158,6 +172,10 @@ class PerformanceService:
             PerformanceMetrics object
         """
         try:
+            # Normalize all dates to UTC timezone at the start
+            start_date = self._normalize_to_utc(start_date)
+            end_date = self._normalize_to_utc(end_date)
+
             # Calculate returns
             beginning_value = self._calculate_portfolio_value_at_date(
                 portfolio, transactions, start_date
@@ -207,13 +225,19 @@ class PerformanceService:
             portfolio_returns = portfolio_values.pct_change(fill_method=None).dropna()
             benchmark_returns = benchmark_data.pct_change(fill_method=None).dropna()
 
+            # Normalize timezones - convert both to timezone-naive for alignment
+            if hasattr(portfolio_returns.index, 'tz') and portfolio_returns.index.tz is not None:
+                portfolio_returns.index = portfolio_returns.index.tz_localize(None)
+            if hasattr(benchmark_returns.index, 'tz') and benchmark_returns.index.tz is not None:
+                benchmark_returns.index = benchmark_returns.index.tz_localize(None)
+
             # Align returns
             aligned = pd.DataFrame({
                 'portfolio': portfolio_returns,
                 'benchmark': benchmark_returns
             }).dropna()
 
-            tracking_error = (aligned['portfolio'] - aligned['benchmark']).std() * np.sqrt(252)
+            tracking_error = (aligned['portfolio'] - aligned['benchmark']).std() * np.sqrt(252) if len(aligned) > 0 else 0.0
 
             # Information ratio
             information_ratio = active_return / tracking_error if tracking_error > 0 else 0.0
@@ -343,22 +367,11 @@ class PerformanceService:
         end_date: datetime
     ) -> Tuple[pd.Series, pd.Series]:
         """Build portfolio value and cash flow series"""
-        # Simplified implementation - build daily value series
-        # Normalize dates to UTC timezone to avoid timezone conflicts
-        from datetime import timezone as dt_timezone
+        # Normalize dates to UTC timezone (should already be normalized by caller)
+        start_date = self._normalize_to_utc(start_date)
+        end_date = self._normalize_to_utc(end_date)
 
-        # Convert to UTC if timezone-aware, otherwise assume UTC
-        if start_date.tzinfo is not None:
-            start_date = start_date.astimezone(dt_timezone.utc)
-        else:
-            start_date = start_date.replace(tzinfo=dt_timezone.utc)
-
-        if end_date.tzinfo is not None:
-            end_date = end_date.astimezone(dt_timezone.utc)
-        else:
-            end_date = end_date.replace(tzinfo=dt_timezone.utc)
-
-        # Create date range (will infer UTC from the input dates)
+        # Create date range in UTC
         dates = pd.date_range(start=start_date, end=end_date, freq='D')
 
         # For now, use linear interpolation
@@ -376,12 +389,7 @@ class PerformanceService:
         # Build cash flows
         cash_flows = pd.Series(0.0, index=dates)
         for txn in transactions:
-            # Ensure txn.date is timezone-aware for comparison
-            txn_date = txn.date
-            if txn_date.tzinfo is None:
-                from datetime import timezone as dt_timezone
-                txn_date = txn_date.replace(tzinfo=dt_timezone.utc)
-
+            txn_date = self._normalize_to_utc(txn.date)
             if start_date <= txn_date <= end_date:
                 if txn.transaction_type in ['buy', 'sell']:
                     cash_flows[txn_date] = txn.amount if txn.transaction_type == 'sell' else -txn.amount
@@ -395,27 +403,19 @@ class PerformanceService:
         date: datetime
     ) -> float:
         """Calculate portfolio value at a specific date"""
-        from datetime import timezone as dt_timezone
-
-        # Ensure date is timezone-aware
-        if date.tzinfo is None:
-            date = date.replace(tzinfo=dt_timezone.utc)
+        # Normalize date to UTC
+        date = self._normalize_to_utc(date)
 
         # Simplified - in production, reconstruct holdings at that date
         if portfolio.inception_date:
-            inception = portfolio.inception_date
-            if inception.tzinfo is None:
-                inception = inception.replace(tzinfo=dt_timezone.utc)
+            inception = self._normalize_to_utc(portfolio.inception_date)
             if date < inception:
                 return 0.0
 
         # Estimate based on transactions
         total = 0.0
         for txn in transactions:
-            txn_date = txn.date
-            if txn_date.tzinfo is None:
-                txn_date = txn_date.replace(tzinfo=dt_timezone.utc)
-
+            txn_date = self._normalize_to_utc(txn.date)
             if txn_date <= date:
                 if txn.transaction_type == 'buy':
                     total += abs(txn.amount)  # amount is negative for buys
