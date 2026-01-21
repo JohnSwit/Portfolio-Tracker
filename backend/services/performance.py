@@ -422,7 +422,10 @@ class PerformanceService:
                 continue
             if start_date <= txn_date <= end_date:
                 if txn.transaction_type in ['buy', 'sell']:
-                    cash_flows[txn_date] = txn.amount if txn.transaction_type == 'sell' else -txn.amount
+                    # Use txn.amount directly - it's already signed correctly
+                    # BUY: amount is negative (cash outflow)
+                    # SELL: amount is positive (cash inflow)
+                    cash_flows[txn_date] = txn.amount
 
         return values, cash_flows
 
