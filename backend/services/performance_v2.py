@@ -53,10 +53,17 @@ class PerformanceCalculator:
             'time_series': {period: DataFrame with daily values}
         }
         """
+        logger.info("=== PERFORMANCE_V2 CALCULATION START ===")
+        print("=== PERFORMANCE_V2 CALCULATION START ===")
+
         if not end_date:
             end_date = datetime.now(timezone.utc)
         else:
             end_date = self._normalize_to_utc(end_date)
+
+        logger.info(f"Portfolio value: ${portfolio.total_value:,.2f}")
+        logger.info(f"Transactions count: {len(transactions)}")
+        print(f"Portfolio value: ${portfolio.total_value:,.2f}, Transactions: {len(transactions)}")
 
         results = {
             'portfolio': {},
@@ -66,8 +73,13 @@ class PerformanceCalculator:
 
         # Get all unique symbols
         symbols = list(set([t.symbol for t in transactions if t.symbol != 'CASH']))
+        logger.info(f"Unique symbols: {symbols}")
+        print(f"Unique symbols: {symbols}")
 
         for period_label, days in self.TIME_PERIODS.items():
+            logger.info(f"Processing period: {period_label}")
+            print(f"Processing period: {period_label}")
+
             # Calculate start date
             if period_label == 'YTD':
                 start_date = datetime(end_date.year, 1, 1, tzinfo=timezone.utc)
@@ -75,6 +87,7 @@ class PerformanceCalculator:
                 start_date = end_date - timedelta(days=days)
 
             # Portfolio-level performance
+            logger.info(f"  Calculating portfolio performance for {period_label}...")
             results['portfolio'][period_label] = self._calculate_portfolio_performance(
                 portfolio, transactions, start_date, end_date
             )
@@ -89,10 +102,14 @@ class PerformanceCalculator:
                 )
 
             # Time series for charting
+            logger.info(f"  Building time series for {period_label}...")
             results['time_series'][period_label] = self._build_time_series(
                 portfolio, transactions, start_date, end_date
             )
+            logger.info(f"  Completed {period_label}")
 
+        logger.info("=== PERFORMANCE_V2 CALCULATION COMPLETE ===")
+        print("=== PERFORMANCE_V2 CALCULATION COMPLETE ===")
         return results
 
     def _calculate_portfolio_performance(
