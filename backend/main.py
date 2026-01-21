@@ -272,10 +272,22 @@ async def get_comprehensive_performance(account_id: str):
     Get comprehensive performance metrics across all time periods
     Returns Simple Return, TWR, and MWR for portfolio and each security
     """
+    logger.info(f"=== PERFORMANCE V2 ENDPOINT CALLED ===")
+    logger.info(f"Account ID: {account_id}")
+    print(f"\n{'='*60}")
+    print(f"PERFORMANCE V2 ENDPOINT - Account: {account_id}")
+    print(f"{'='*60}")
+
     try:
+        logger.info("Step 1: Fetching portfolio...")
+        print("Step 1: Fetching portfolio...")
         portfolio = await get_portfolio(account_id)
+        logger.info(f"Portfolio fetched: total_value=${portfolio.total_value:,.2f}, holdings={len(portfolio.holdings)}")
+        print(f"Portfolio: total_value=${portfolio.total_value:,.2f}, holdings={len(portfolio.holdings)}")
 
         # Fetch all transactions from inception
+        logger.info("Step 2: Calculating days since inception...")
+        print("Step 2: Calculating days since inception...")
         if portfolio.inception_date:
             inception = portfolio.inception_date
             if inception.tzinfo is None:
@@ -284,15 +296,25 @@ async def get_comprehensive_performance(account_id: str):
         else:
             days_since_inception = 3650
 
+        logger.info(f"Step 3: Fetching {days_since_inception} days of transactions...")
+        print(f"Step 3: Fetching {days_since_inception} days of transactions...")
         transactions_response = await get_transactions(account_id, days=days_since_inception)
         transactions = transactions_response.get("transactions", [])
+        logger.info(f"Fetched {len(transactions)} transactions")
+        print(f"Fetched {len(transactions)} transactions")
 
         # Calculate performance for all periods
+        logger.info("Step 4: Calculating performance for all periods...")
+        print("Step 4: Calculating performance for all periods...")
         results = performance_calculator.calculate_performance_for_all_periods(
             portfolio, transactions
         )
+        logger.info("Performance calculations completed")
+        print("Performance calculations completed")
 
         # Convert time series DataFrames to JSON-serializable format
+        logger.info("Step 5: Converting time series to JSON...")
+        print("Step 5: Converting time series to JSON...")
         time_series_json = {}
         for period, df in results['time_series'].items():
             time_series_json[period] = {
@@ -302,16 +324,23 @@ async def get_comprehensive_performance(account_id: str):
                 'mwr': df['mwr'].tolist()
             }
 
-        return {
+        logger.info("Step 6: Preparing response...")
+        print("Step 6: Preparing response...")
+        response = {
             'portfolio': results['portfolio'],
             'securities': results['securities'],
             'time_series': time_series_json
         }
+        logger.info(f"=== PERFORMANCE V2 ENDPOINT SUCCESS - Returning data for {len(results['securities'])} securities ===")
+        print(f"=== SUCCESS - Returning data ===\n")
+        return response
 
     except Exception as e:
-        logger.error(f"Error calculating comprehensive performance: {e}")
+        logger.error(f"!!! ERROR in performance-v2 endpoint: {e}")
+        print(f"!!! ERROR: {e}")
         import traceback
         traceback.print_exc()
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
 
