@@ -37,6 +37,87 @@ class PerformanceCalculator:
             return dt.replace(tzinfo=timezone.utc)
         return dt.astimezone(timezone.utc)
 
+    def _fetch_historical_prices(
+        self,
+        symbols: List[str],
+        start_date: datetime,
+        end_date: datetime
+    ) -> pd.DataFrame:
+        """
+        Fetch historical price data for all symbols
+        Returns DataFrame with dates as index and symbols as columns
+        """
+        if not symbols:
+            return pd.DataFrame()
+
+        try:
+            # Fetch historical data from yfinance
+            price_data = market_data_service.get_price_data(
+                symbols, start_date, end_date, interval="1d"
+            )
+
+            # Extract closing prices
+            if len(symbols) == 1:
+                # Single symbol returns different structure
+                prices_df = pd.DataFrame({symbols[0]: price_data['Close']})
+            else:
+                # Multiple symbols
+                prices_df = pd.DataFrame()
+                for symbol in symbols:
+                    try:
+                        if symbol in price_data:
+                            prices_df[symbol] = price_data[symbol]['Close']
+                        else:
+                            # Try alternative access pattern
+                            prices_df[symbol] = price_data.xs(symbol, level=0, axis=1)['Close']
+                    except Exception as e:
+                        logger.warning(f"Could not extract price data for {symbol}: {e}")
+                        prices_df[symbol] = pd.Series(dtype=float)
+
+            # Forward fill missing prices (use last known price for weekends/holidays)
+            prices_df = prices_df.ffill()
+            # Backward fill for any remaining NaNs at start
+            prices_df = prices_df.bfill()
+
+            return prices_df
+
+        except Exception as e:
+            logger.error(f"Error fetching historical prices: {e}")
+            # Return empty DataFrame on error
+            return pd.DataFrame()
+
+    def _get_price_at_date(self, symbol: str, date: datetime) -> float:
+        """
+        Get price for a symbol at a specific date from historical data
+        Falls back to current price if historical data unavailable
+        """
+        date = self._normalize_to_utc(date)
+        date_only = date.date()
+
+        # Try to get from historical price cache
+        if hasattr(self, '_price_history') and not self._price_history.empty:
+            if symbol in self._price_history.columns:
+                # Find closest date (handle weekends/holidays)
+                available_dates = self._price_history.index
+                # Convert to dates for comparison
+                available_dates_only = [d.date() if hasattr(d, 'date') else d for d in available_dates]
+
+                # Find the closest date on or before requested date
+                valid_dates = [d for d in available_dates_only if d <= date_only]
+                if valid_dates:
+                    closest_date = max(valid_dates)
+                    # Get index position
+                    idx = available_dates_only.index(closest_date)
+                    price = self._price_history[symbol].iloc[idx]
+                    if not pd.isna(price) and price > 0:
+                        return float(price)
+
+        # Fallback to current price
+        if hasattr(self, '_current_prices'):
+            return self._current_prices.get(symbol, 0.0)
+
+        return 0.0
+
     def calculate_performance_for_all_periods(
         self,
         portfolio: Portfolio,
@@ -76,11 +157,23 @@ class PerformanceCalculator:
         logger.info(f"Unique symbols: {symbols}")
         print(f"Unique symbols: {symbols}")
 
-        # CRITICAL OPTIMIZATION: Fetch current prices ONCE and cache them
-        # This prevents hundreds of redundant API calls to yfinance
-        print(f"Fetching current prices for {len(symbols)} symbols (ONE TIME ONLY)...")
-        self._price_cache = market_data_service.get_current_prices(symbols) if symbols else {}
-        print(f"Price cache loaded: {len(self._price_cache)} prices")
+        # CRITICAL FIX: Fetch HISTORICAL prices, not just current prices
+        # This is essential for accurate TWR/MWR calculations
+        # Determine earliest date we need prices for
+        if transactions:
+            earliest_txn = min([self._normalize_to_utc(t.date) for t in transactions])
+            # Start a bit earlier to ensure we have prices before first transaction
+            start_date = earliest_txn - timedelta(days=7)
+        else:
+            start_date = end_date - timedelta(days=365)
+
+        print(f"Fetching historical prices for {len(symbols)} symbols from {start_date.date()} to {end_date.date()}...")
+        self._price_history = self._fetch_historical_prices(symbols, start_date, end_date)
+        print(f"Price history loaded: {len(self._price_history)} dates x {len(symbols)} symbols")
+
+        # Also cache current prices for any missing data fallback
+        self._current_prices = market_data_service.get_current_prices(symbols) if symbols else {}
+        print(f"Current prices loaded: {len(self._current_prices)} prices")
 
         for period_label, days in self.TIME_PERIODS.items():
             logger.info(f"Processing period: {period_label}")
@@ -435,7 +528,7 @@ class PerformanceCalculator:
         transactions: List[Transaction],
         date: datetime
     ) -> float:
-        """Calculate total portfolio value at a specific date"""
+        """Calculate total portfolio value at a specific date using HISTORICAL prices"""
         date = self._normalize_to_utc(date)
 
         # Reconstruct holdings at date
@@ -459,23 +552,16 @@ class PerformanceCalculator:
                     else:
                         holdings[symbol]['cost_basis'] = 0
 
-        # Get symbols with positive quantity
-        symbols = [sym for sym, data in holdings.items() if data['quantity'] > 0]
-        if not symbols:
-            return 0.0
-
-        # Use cached prices instead of fetching from API
-        prices = getattr(self, '_price_cache', {})
-
-        # Calculate total value
+        # Calculate total value using HISTORICAL prices at this date
         total = 0.0
         for symbol, data in holdings.items():
             if data['quantity'] > 0:
-                price = prices.get(symbol, 0)
+                # CRITICAL: Use historical price at this specific date
+                price = self._get_price_at_date(symbol, date)
                 if price > 0:
                     total += data['quantity'] * price
                 else:
-                    # Fallback to cost basis
+                    # Fallback to cost basis if no price available
                     total += data['cost_basis']
 
         return total
@@ -486,7 +572,7 @@ class PerformanceCalculator:
         transactions: List[Transaction],
         date: datetime
     ) -> float:
-        """Calculate value of a specific security at a date"""
+        """Calculate value of a specific security at a date using HISTORICAL price"""
         date = self._normalize_to_utc(date)
 
         # Get quantity held at date
@@ -502,9 +588,8 @@ class PerformanceCalculator:
         if quantity <= 0:
             return 0.0
 
-        # Use cached price instead of fetching from API
-        prices = getattr(self, '_price_cache', {})
-        price = prices.get(symbol, 0)
+        # CRITICAL: Use historical price at this specific date
+        price = self._get_price_at_date(symbol, date)
 
         return quantity * price
 
