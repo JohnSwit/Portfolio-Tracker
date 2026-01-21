@@ -48,30 +48,52 @@ class PerformanceCalculator:
         Returns DataFrame with dates as index and symbols as columns
         """
         if not symbols:
+            print("      [Price Fetch] No symbols to fetch")
             return pd.DataFrame()
 
         try:
+            print(f"      [Price Fetch] Downloading data for {len(symbols)} symbols...")
+            print(f"      [Price Fetch] Symbols: {symbols}")
+
             # Fetch historical data from yfinance
             price_data = market_data_service.get_price_data(
                 symbols, start_date, end_date, interval="1d"
             )
 
+            print(f"      [Price Fetch] Downloaded data shape: {price_data.shape if hasattr(price_data, 'shape') else 'N/A'}")
+            print(f"      [Price Fetch] Downloaded data columns: {price_data.columns.tolist() if hasattr(price_data, 'columns') else 'N/A'}")
+
             # Extract closing prices
+            prices_df = pd.DataFrame()
+
             if len(symbols) == 1:
-                # Single symbol returns different structure
-                prices_df = pd.DataFrame({symbols[0]: price_data['Close']})
+                # Single symbol - simpler structure
+                symbol = symbols[0]
+                if 'Close' in price_data.columns:
+                    prices_df[symbol] = price_data['Close']
+                    print(f"      [Price Fetch] Extracted {len(prices_df)} prices for {symbol}")
+                else:
+                    print(f"      [Price Fetch] WARNING: No 'Close' column found for single symbol")
+                    prices_df[symbol] = pd.Series(dtype=float)
             else:
-                # Multiple symbols
-                prices_df = pd.DataFrame()
+                # Multiple symbols - more complex structure
                 for symbol in symbols:
                     try:
-                        if symbol in price_data:
+                        # Try different access patterns based on yfinance structure
+                        if symbol in price_data.columns.get_level_values(0):
+                            # MultiIndex columns: (symbol, 'Close')
+                            prices_df[symbol] = price_data[(symbol, 'Close')]
+                            print(f"      [Price Fetch] Extracted {len(prices_df[symbol].dropna())} prices for {symbol} (MultiIndex)")
+                        elif symbol in price_data.columns:
+                            # Flat columns with symbol name
                             prices_df[symbol] = price_data[symbol]['Close']
+                            print(f"      [Price Fetch] Extracted {len(prices_df[symbol].dropna())} prices for {symbol} (Direct)")
                         else:
-                            # Try alternative access pattern
-                            prices_df[symbol] = price_data.xs(symbol, level=0, axis=1)['Close']
+                            print(f"      [Price Fetch] WARNING: Could not find {symbol} in price data")
+                            prices_df[symbol] = pd.Series(dtype=float)
                     except Exception as e:
                         logger.warning(f"Could not extract price data for {symbol}: {e}")
+                        print(f"      [Price Fetch] ERROR extracting {symbol}: {e}")
                         prices_df[symbol] = pd.Series(dtype=float)
 
             # Forward fill missing prices (use last known price for weekends/holidays)
@@ -79,10 +101,17 @@ class PerformanceCalculator:
             # Backward fill for any remaining NaNs at start
             prices_df = prices_df.bfill()
 
+            print(f"      [Price Fetch] Final price matrix: {len(prices_df)} dates x {len(prices_df.columns)} symbols")
+            print(f"      [Price Fetch] Date range: {prices_df.index[0] if len(prices_df) > 0 else 'N/A'} to {prices_df.index[-1] if len(prices_df) > 0 else 'N/A'}")
+            print(f"      [Price Fetch] Sample prices: {prices_df.iloc[0].to_dict() if len(prices_df) > 0 else 'N/A'}")
+
             return prices_df
 
         except Exception as e:
             logger.error(f"Error fetching historical prices: {e}")
+            print(f"      [Price Fetch] CRITICAL ERROR: {e}")
+            import traceback
+            traceback.print_exc()
             # Return empty DataFrame on error
             return pd.DataFrame()
 
@@ -599,12 +628,35 @@ class PerformanceCalculator:
         start_date: datetime,
         end_date: datetime
     ) -> List[Tuple[datetime, float]]:
-        """Get all portfolio cash flows in period"""
+        """
+        Get all portfolio cash flows in period
+
+        IMPORTANT: This excludes CASH symbol transactions because they're auto-generated
+        to offset buys/sells. We only count the actual security transactions:
+        - BUY: negative amount (cash outflow / contribution)
+        - SELL: positive amount (cash inflow / withdrawal)
+        - DIVIDEND: positive amount (income)
+        """
         flows = []
+        cash_txns_excluded = 0
+
         for txn in transactions:
             txn_date = self._normalize_to_utc(txn.date)
-            if txn.symbol != 'CASH' and start_date < txn_date <= end_date:
+            if txn.symbol == 'CASH':
+                cash_txns_excluded += 1
+                continue
+
+            if start_date < txn_date <= end_date:
                 flows.append((txn_date, txn.amount))
+
+        if cash_txns_excluded > 0:
+            print(f"        [Cash Flows] Excluded {cash_txns_excluded} CASH transactions (auto-generated)")
+        if flows:
+            total_flow = sum([f[1] for f in flows])
+            print(f"        [Cash Flows] Found {len(flows)} flows, total: ${total_flow:,.2f}")
+            # Show first few for debugging
+            for i, (date, amount) in enumerate(flows[:5]):
+                print(f"          Flow {i+1}: {date.date()} = ${amount:,.2f}")
 
         return flows
 
