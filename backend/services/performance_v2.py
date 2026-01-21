@@ -76,6 +76,12 @@ class PerformanceCalculator:
         logger.info(f"Unique symbols: {symbols}")
         print(f"Unique symbols: {symbols}")
 
+        # CRITICAL OPTIMIZATION: Fetch current prices ONCE and cache them
+        # This prevents hundreds of redundant API calls to yfinance
+        print(f"Fetching current prices for {len(symbols)} symbols (ONE TIME ONLY)...")
+        self._price_cache = market_data_service.get_current_prices(symbols) if symbols else {}
+        print(f"Price cache loaded: {len(self._price_cache)} prices")
+
         for period_label, days in self.TIME_PERIODS.items():
             logger.info(f"Processing period: {period_label}")
             print(f"Processing period: {period_label}")
@@ -453,12 +459,13 @@ class PerformanceCalculator:
                     else:
                         holdings[symbol]['cost_basis'] = 0
 
-        # Get current prices
+        # Get symbols with positive quantity
         symbols = [sym for sym, data in holdings.items() if data['quantity'] > 0]
         if not symbols:
             return 0.0
 
-        prices = market_data_service.get_current_prices(symbols)
+        # Use cached prices instead of fetching from API
+        prices = getattr(self, '_price_cache', {})
 
         # Calculate total value
         total = 0.0
@@ -495,8 +502,8 @@ class PerformanceCalculator:
         if quantity <= 0:
             return 0.0
 
-        # Get price at date (using current price as approximation)
-        prices = market_data_service.get_current_prices([symbol])
+        # Use cached price instead of fetching from API
+        prices = getattr(self, '_price_cache', {})
         price = prices.get(symbol, 0)
 
         return quantity * price
