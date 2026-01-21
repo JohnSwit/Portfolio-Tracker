@@ -31,12 +31,13 @@ class Transaction(BaseModel):
     """Portfolio transaction"""
     date: datetime
     symbol: str
-    transaction_type: str  # buy, sell, dividend, split
+    transaction_type: str  # buy, sell, dividend, split, deposit, withdrawal
     quantity: float
     price: float
-    amount: float
+    amount: float  # Signed: negative = cash out, positive = cash in
     fees: float = 0.0
     notes: Optional[str] = None
+    is_synthetic: bool = False  # True for auto-generated cash balancing transactions
 
 
 class Portfolio(BaseModel):

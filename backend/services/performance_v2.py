@@ -205,12 +205,12 @@ class PerformanceCalculator:
         print(f"Current prices loaded: {len(self._current_prices)} prices")
 
         # CRITICAL FIX: Determine portfolio inception date
-        # This is the earliest transaction date (excluding CASH auto-generated transactions)
+        # This is the earliest transaction date (excluding synthetic auto-generated transactions)
         portfolio_inception = None
         if transactions:
-            non_cash_txns = [self._normalize_to_utc(t.date) for t in transactions if t.symbol != 'CASH']
-            if non_cash_txns:
-                portfolio_inception = min(non_cash_txns)
+            non_synthetic_txns = [self._normalize_to_utc(t.date) for t in transactions if not t.is_synthetic]
+            if non_synthetic_txns:
+                portfolio_inception = min(non_synthetic_txns)
                 print(f"Portfolio inception date: {portfolio_inception.date()}")
 
         for period_label, days in self.TIME_PERIODS.items():
@@ -412,11 +412,11 @@ class PerformanceCalculator:
         Calculate Time-Weighted Return for portfolio
         Chain-links sub-period returns between cash flow dates
         """
-        # Get all cash flow dates in the period
+        # Get all cash flow dates in the period (exclude synthetic transactions)
         cf_dates = sorted(list(set([
             self._normalize_to_utc(t.date)
             for t in transactions
-            if t.symbol != 'CASH' and start_date <= self._normalize_to_utc(t.date) <= end_date
+            if not t.is_synthetic and start_date <= self._normalize_to_utc(t.date) <= end_date
         ])))
 
         # Add start and end dates
@@ -435,10 +435,10 @@ class PerformanceCalculator:
             # Get portfolio value at end of sub-period (before flows)
             value_end_before_flows = self._calculate_portfolio_value_at_date(transactions, period_end)
 
-            # Get net flows on end date
+            # Get net flows on end date (exclude synthetic transactions)
             flows_on_date = sum([
                 t.amount for t in transactions
-                if t.symbol != 'CASH' and self._normalize_to_utc(t.date) == period_end
+                if not t.is_synthetic and self._normalize_to_utc(t.date) == period_end
             ])
 
             # Value at end before flows
@@ -648,31 +648,36 @@ class PerformanceCalculator:
         end_date: datetime
     ) -> List[Tuple[datetime, float]]:
         """
-        Get all portfolio cash flows in period
+        Get all EXTERNAL portfolio cash flows in period
 
-        IMPORTANT: This excludes CASH symbol transactions because they're auto-generated
-        to offset buys/sells. We only count the actual security transactions:
-        - BUY: negative amount (cash outflow / contribution)
-        - SELL: positive amount (cash inflow / withdrawal)
+        CRITICAL: This excludes synthetic transactions (is_synthetic=True) which are
+        auto-generated to balance cash. We only count EXTERNAL flows:
+        - Real BUY: negative amount (cash outflow / contribution)
+        - Real SELL: positive amount (cash inflow / withdrawal)
         - DIVIDEND: positive amount (income)
+        - Real DEPOSIT: positive amount (external contribution)
+        - Real WITHDRAWAL: negative amount (external withdrawal)
         """
         flows = []
-        cash_txns_excluded = 0
+        synthetic_excluded = 0
 
         for txn in transactions:
             txn_date = self._normalize_to_utc(txn.date)
-            if txn.symbol == 'CASH':
-                cash_txns_excluded += 1
+
+            # CRITICAL FIX: Filter by is_synthetic, not by symbol == 'CASH'
+            # This allows real deposits/withdrawals while excluding synthetic balancing transactions
+            if txn.is_synthetic:
+                synthetic_excluded += 1
                 continue
 
             if start_date < txn_date <= end_date:
                 flows.append((txn_date, txn.amount))
 
-        if cash_txns_excluded > 0:
-            print(f"        [Cash Flows] Excluded {cash_txns_excluded} CASH transactions (auto-generated)")
+        if synthetic_excluded > 0:
+            print(f"        [Cash Flows] Excluded {synthetic_excluded} synthetic transactions (auto-generated for cash balance)")
         if flows:
             total_flow = sum([f[1] for f in flows])
-            print(f"        [Cash Flows] Found {len(flows)} flows, total: ${total_flow:,.2f}")
+            print(f"        [Cash Flows] Found {len(flows)} external flows, total: ${total_flow:,.2f}")
             # Show first few for debugging
             for i, (date, amount) in enumerate(flows[:5]):
                 print(f"          Flow {i+1}: {date.date()} = ${amount:,.2f}")
