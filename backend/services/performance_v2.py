@@ -88,25 +88,34 @@ class PerformanceCalculator:
 
             # Portfolio-level performance
             logger.info(f"  Calculating portfolio performance for {period_label}...")
+            print(f"  [Step A] Portfolio-level for {period_label}...")
             results['portfolio'][period_label] = self._calculate_portfolio_performance(
                 portfolio, transactions, start_date, end_date
             )
+            print(f"  [Step A] Portfolio-level DONE")
 
             # Security-level performance
-            for symbol in symbols:
+            print(f"  [Step B] Security-level for {period_label} ({len(symbols)} symbols)...")
+            for i, symbol in enumerate(symbols):
+                print(f"    [{i+1}/{len(symbols)}] Calculating {symbol}...")
                 if symbol not in results['securities']:
                     results['securities'][symbol] = {}
 
                 results['securities'][symbol][period_label] = self._calculate_security_performance(
                     symbol, transactions, start_date, end_date
                 )
+                print(f"    [{i+1}/{len(symbols)}] {symbol} DONE")
+            print(f"  [Step B] Security-level DONE")
 
             # Time series for charting
             logger.info(f"  Building time series for {period_label}...")
+            print(f"  [Step C] Time series for {period_label}...")
             results['time_series'][period_label] = self._build_time_series(
                 portfolio, transactions, start_date, end_date
             )
             logger.info(f"  Completed {period_label}")
+            print(f"  [Step C] Time series DONE")
+            print(f"✓ Completed {period_label}\n")
 
         logger.info("=== PERFORMANCE_V2 CALCULATION COMPLETE ===")
         print("=== PERFORMANCE_V2 CALCULATION COMPLETE ===")
@@ -121,27 +130,37 @@ class PerformanceCalculator:
     ) -> Dict:
         """Calculate Simple, TWR, and MWR for entire portfolio"""
 
+        print(f"    [Portfolio Perf] Getting start value...")
         # Get portfolio value at start and end
         start_value = self._calculate_portfolio_value_at_date(transactions, start_date)
         end_value = portfolio.total_value
+        print(f"    [Portfolio Perf] Start=${start_value:,.2f}, End=${end_value:,.2f}")
 
+        print(f"    [Portfolio Perf] Getting cash flows...")
         # Get all cash flows in the period (excluding CASH placeholders)
         cash_flows = self._get_portfolio_cash_flows(transactions, start_date, end_date)
+        print(f"    [Portfolio Perf] Found {len(cash_flows)} cash flows")
 
+        print(f"    [Portfolio Perf] Calculating Simple Return...")
         # Calculate Simple Return (Modified Dietz)
         simple_return = self._calculate_simple_return(
             start_value, end_value, cash_flows, start_date, end_date
         )
+        print(f"    [Portfolio Perf] Simple Return: {simple_return}")
 
+        print(f"    [Portfolio Perf] Calculating TWR (this may take a moment)...")
         # Calculate TWR
         twr = self._calculate_twr_portfolio(
             transactions, start_date, end_date
         )
+        print(f"    [Portfolio Perf] TWR: {twr}")
 
+        print(f"    [Portfolio Perf] Calculating MWR...")
         # Calculate MWR (IRR)
         mwr = self._calculate_mwr(
             cash_flows, start_value, end_value, start_date, end_date
         )
+        print(f"    [Portfolio Perf] MWR: {mwr}")
 
         return {
             'simple_return': simple_return,
@@ -520,33 +539,53 @@ class PerformanceCalculator:
         start_date: datetime,
         end_date: datetime
     ) -> pd.DataFrame:
-        """Build daily time series for charting"""
-        dates = pd.date_range(start=start_date, end=end_date, freq='D')
+        """Build time series for charting - using sampling for performance"""
+        print(f"      [Time Series] Building series from {start_date.date()} to {end_date.date()}")
+
+        # Calculate number of days
+        total_days = (end_date - start_date).days
+
+        # Sample at most 20 points to avoid excessive API calls
+        # For short periods (< 20 days), use daily; otherwise sample evenly
+        if total_days <= 20:
+            sample_points = total_days + 1
+        else:
+            sample_points = 20
+
+        print(f"      [Time Series] Sampling {sample_points} points from {total_days} days")
+
+        # Create sample dates
+        date_indices = np.linspace(0, total_days, sample_points, dtype=int)
+        sample_dates = [start_date + timedelta(days=int(d)) for d in date_indices]
 
         simple_returns = []
         twr_returns = []
         mwr_returns = []
 
-        # Calculate cumulative returns from start to each date
-        for current_date in dates:
-            current_date_dt = current_date.to_pydatetime().replace(tzinfo=timezone.utc)
+        # Calculate cumulative returns from start to each sample date
+        for i, current_date in enumerate(sample_dates):
+            print(f"      [Time Series] Point {i+1}/{sample_points}: {current_date.date()}")
 
             # Calculate returns from start_date to current_date
             perf = self._calculate_portfolio_performance(
-                portfolio, transactions, start_date, current_date_dt
+                portfolio, transactions, start_date, current_date
             )
 
             simple_returns.append(perf['simple_return'] if perf['simple_return'] is not None else 0)
             twr_returns.append(perf['twr'] if perf['twr'] is not None else 0)
             mwr_returns.append(perf['mwr'] if perf['mwr'] is not None else 0)
 
+        # Convert to pandas DatetimeIndex for consistency
+        dates_index = pd.to_datetime([d.date() for d in sample_dates])
+
         df = pd.DataFrame({
-            'date': dates,
+            'date': dates_index,
             'simple_return': simple_returns,
             'twr': twr_returns,
             'mwr': mwr_returns
         })
 
+        print(f"      [Time Series] DONE - Generated {len(df)} data points")
         return df
 
 
