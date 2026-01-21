@@ -36,8 +36,8 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# CORS middleware
-origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
+# CORS middleware - Allow both Vite dev server (5173) and standard React (3000)
+origins = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
