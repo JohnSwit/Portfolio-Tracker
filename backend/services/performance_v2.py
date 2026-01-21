@@ -204,6 +204,15 @@ class PerformanceCalculator:
         self._current_prices = market_data_service.get_current_prices(symbols) if symbols else {}
         print(f"Current prices loaded: {len(self._current_prices)} prices")
 
+        # CRITICAL FIX: Determine portfolio inception date
+        # This is the earliest transaction date (excluding CASH auto-generated transactions)
+        portfolio_inception = None
+        if transactions:
+            non_cash_txns = [self._normalize_to_utc(t.date) for t in transactions if t.symbol != 'CASH']
+            if non_cash_txns:
+                portfolio_inception = min(non_cash_txns)
+                print(f"Portfolio inception date: {portfolio_inception.date()}")
+
         for period_label, days in self.TIME_PERIODS.items():
             logger.info(f"Processing period: {period_label}")
             print(f"Processing period: {period_label}")
@@ -213,6 +222,13 @@ class PerformanceCalculator:
                 start_date = datetime(end_date.year, 1, 1, tzinfo=timezone.utc)
             else:
                 start_date = end_date - timedelta(days=days)
+
+            # CRITICAL FIX: If start date is before portfolio inception, adjust it
+            # This prevents calculating from $0 starting values which creates garbage results
+            if portfolio_inception and start_date < portfolio_inception:
+                print(f"  [ADJUSTED] Period {period_label} starts before portfolio inception ({portfolio_inception.date()})")
+                print(f"  [ADJUSTED] Adjusting start date from {start_date.date()} to {portfolio_inception.date()}")
+                start_date = portfolio_inception
 
             # Portfolio-level performance
             logger.info(f"  Calculating portfolio performance for {period_label}...")
