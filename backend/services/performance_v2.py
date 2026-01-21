@@ -442,7 +442,9 @@ class PerformanceCalculator:
             ])
 
             # Value at end before flows
-            value_end = value_end_before_flows - flows_on_date
+            # CRITICAL FIX: Add flows_on_date (not subtract) to back out the transaction impact
+            # Since BUY amount is negative and SELL amount is positive, adding backs out the flow correctly
+            value_end = value_end_before_flows + flows_on_date
 
             # Calculate sub-period return
             if value_start > 0:
@@ -503,7 +505,8 @@ class PerformanceCalculator:
                 if t.symbol == symbol and self._normalize_to_utc(t.date) == period_end
             ])
 
-            value_end = value_end_before_flows - flows_on_date
+            # CRITICAL FIX: Add flows_on_date (not subtract) to back out the transaction impact
+            value_end = value_end_before_flows + flows_on_date
 
             if value_start > 0:
                 period_return = (value_end - value_start) / value_start
