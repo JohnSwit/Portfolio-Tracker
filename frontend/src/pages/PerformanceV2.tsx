@@ -32,6 +32,7 @@ interface PerformanceData {
 export default function PerformanceV2() {
   const [data, setData] = useState<PerformanceData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [selectedPeriod, setSelectedPeriod] = useState('1Y')
   const [selectedMetrics, setSelectedMetrics] = useState<string[]>(['twr'])
   const [showTooltip, setShowTooltip] = useState<string | null>(null)
@@ -42,10 +43,14 @@ export default function PerformanceV2() {
 
   const loadPerformance = async () => {
     try {
+      setError(null)
+      console.log('Fetching performance data from:', `${API_BASE_URL}/api/performance-v2/${ACCOUNT_ID}`)
       const response = await axios.get(`${API_BASE_URL}/api/performance-v2/${ACCOUNT_ID}`)
+      console.log('Performance data received:', response.data)
       setData(response.data)
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error loading performance:', error)
+      setError(error?.response?.data?.detail || error?.message || 'Failed to load performance data')
     } finally {
       setLoading(false)
     }
@@ -71,7 +76,7 @@ export default function PerformanceV2() {
     return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   }
 
-  if (loading || !data) {
+  if (loading) {
     return (
       <div className="flex items-center justify-center h-96">
         <div className="text-slate-400">Loading performance data...</div>
@@ -79,23 +84,53 @@ export default function PerformanceV2() {
     )
   }
 
-  // Prepare chart data
-  const chartData = data.time_series[selectedPeriod]
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <div className="text-center">
+          <div className="text-red-400 text-lg mb-4">Error Loading Performance Data</div>
+          <div className="text-slate-400 text-sm mb-4">{error}</div>
+          <button
+            onClick={() => {
+              setLoading(true)
+              loadPerformance()
+            }}
+            className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  if (!data) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <div className="text-slate-400">No performance data available</div>
+      </div>
+    )
+  }
+
+  // Prepare chart data with safety checks
+  const chartData = data.time_series?.[selectedPeriod]?.dates
     ? data.time_series[selectedPeriod].dates.map((date: string, i: number) => ({
         date,
-        simple_return: data.time_series[selectedPeriod].simple_return[i] * 100,
-        twr: data.time_series[selectedPeriod].twr[i] * 100,
-        mwr: data.time_series[selectedPeriod].mwr[i] * 100,
+        simple_return: (data.time_series[selectedPeriod].simple_return?.[i] || 0) * 100,
+        twr: (data.time_series[selectedPeriod].twr?.[i] || 0) * 100,
+        mwr: (data.time_series[selectedPeriod].mwr?.[i] || 0) * 100,
       }))
     : []
 
-  // Prepare securities table data
-  const securitiesData = Object.entries(data.securities).map(([symbol, periods]: [string, any]) => ({
-    symbol,
-    ...periods[selectedPeriod],
-  }))
+  // Prepare securities table data with safety checks
+  const securitiesData = Object.entries(data.securities || {})
+    .map(([symbol, periods]: [string, any]) => ({
+      symbol,
+      ...(periods?.[selectedPeriod] || {}),
+    }))
+    .filter((s) => s.symbol) // Filter out empty entries
 
-  const portfolioMetrics = data.portfolio[selectedPeriod] || {}
+  const portfolioMetrics = data.portfolio?.[selectedPeriod] || {}
 
   return (
     <div>
