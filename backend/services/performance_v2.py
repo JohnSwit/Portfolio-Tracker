@@ -539,33 +539,53 @@ class PerformanceCalculator:
         start_date: datetime,
         end_date: datetime
     ) -> pd.DataFrame:
-        """Build daily time series for charting"""
-        dates = pd.date_range(start=start_date, end=end_date, freq='D')
+        """Build time series for charting - using sampling for performance"""
+        print(f"      [Time Series] Building series from {start_date.date()} to {end_date.date()}")
+
+        # Calculate number of days
+        total_days = (end_date - start_date).days
+
+        # Sample at most 20 points to avoid excessive API calls
+        # For short periods (< 20 days), use daily; otherwise sample evenly
+        if total_days <= 20:
+            sample_points = total_days + 1
+        else:
+            sample_points = 20
+
+        print(f"      [Time Series] Sampling {sample_points} points from {total_days} days")
+
+        # Create sample dates
+        date_indices = np.linspace(0, total_days, sample_points, dtype=int)
+        sample_dates = [start_date + timedelta(days=int(d)) for d in date_indices]
 
         simple_returns = []
         twr_returns = []
         mwr_returns = []
 
-        # Calculate cumulative returns from start to each date
-        for current_date in dates:
-            current_date_dt = current_date.to_pydatetime().replace(tzinfo=timezone.utc)
+        # Calculate cumulative returns from start to each sample date
+        for i, current_date in enumerate(sample_dates):
+            print(f"      [Time Series] Point {i+1}/{sample_points}: {current_date.date()}")
 
             # Calculate returns from start_date to current_date
             perf = self._calculate_portfolio_performance(
-                portfolio, transactions, start_date, current_date_dt
+                portfolio, transactions, start_date, current_date
             )
 
             simple_returns.append(perf['simple_return'] if perf['simple_return'] is not None else 0)
             twr_returns.append(perf['twr'] if perf['twr'] is not None else 0)
             mwr_returns.append(perf['mwr'] if perf['mwr'] is not None else 0)
 
+        # Convert to pandas DatetimeIndex for consistency
+        dates_index = pd.to_datetime([d.date() for d in sample_dates])
+
         df = pd.DataFrame({
-            'date': dates,
+            'date': dates_index,
             'simple_return': simple_returns,
             'twr': twr_returns,
             'mwr': mwr_returns
         })
 
+        print(f"      [Time Series] DONE - Generated {len(df)} data points")
         return df
 
 
