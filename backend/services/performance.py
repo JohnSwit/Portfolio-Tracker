@@ -312,27 +312,53 @@ class PerformanceService:
             AttributionResult object
         """
         try:
+            # Helper function to handle NaN
+            def safe_float(value):
+                """Convert NaN/inf to 0.0 for JSON serialization"""
+                if pd.isna(value) or np.isinf(value):
+                    return 0.0
+                return float(value)
+
             # Get stock returns for the period
             symbols = [h.symbol for h in portfolio.holdings]
+            if not symbols:
+                # No holdings, return empty attribution
+                return AttributionResult(
+                    period=f"{start_date.date()} to {end_date.date()}",
+                    total_return=0.0,
+                    sector_attribution={},
+                    country_attribution={},
+                    stock_attribution={},
+                    factor_attribution={}
+                )
+
             price_data = market_data_service.get_price_data(symbols, start_date, end_date)
 
             # Calculate individual stock returns
             stock_returns = {}
             for symbol in symbols:
-                if len(symbols) == 1:
-                    # For single symbol, yfinance returns different structure
-                    if 'Close' in price_data.columns:
-                        prices = price_data['Close']
+                try:
+                    if len(symbols) == 1:
+                        # For single symbol, yfinance returns different structure
+                        if 'Close' in price_data.columns:
+                            prices = price_data['Close']
+                        else:
+                            prices = price_data
+                        # Ensure 1D series
+                        if hasattr(prices, 'squeeze'):
+                            prices = prices.squeeze()
                     else:
-                        prices = price_data
-                    # Ensure 1D series
-                    if hasattr(prices, 'squeeze'):
-                        prices = prices.squeeze()
-                else:
-                    prices = price_data[symbol]['Close']
+                        prices = price_data[symbol]['Close']
 
-                stock_return = (prices.iloc[-1] - prices.iloc[0]) / prices.iloc[0]
-                stock_returns[symbol] = float(stock_return)
+                    # Calculate return with safety checks
+                    if len(prices) >= 2 and prices.iloc[0] != 0 and not pd.isna(prices.iloc[0]):
+                        stock_return = (prices.iloc[-1] - prices.iloc[0]) / prices.iloc[0]
+                        stock_returns[symbol] = safe_float(stock_return)
+                    else:
+                        stock_returns[symbol] = 0.0
+                except Exception as e:
+                    logger.warning(f"Error calculating return for {symbol}: {e}")
+                    stock_returns[symbol] = 0.0
 
             # Calculate portfolio weights
             total_value = sum(h.market_value or 0 for h in portfolio.holdings)
@@ -342,6 +368,7 @@ class PerformanceService:
             # Portfolio return
             portfolio_return = sum(weights.get(s, 0) * stock_returns.get(s, 0)
                                   for s in symbols)
+            portfolio_return = safe_float(portfolio_return)
 
             # Sector attribution
             sector_attribution = self._calculate_sector_attribution(
@@ -353,12 +380,12 @@ class PerformanceService:
                 portfolio, stock_returns, weights
             )
 
-            # Stock-level attribution
+            # Stock-level attribution with safe floats
             stock_attribution = {
                 symbol: {
-                    'return': stock_returns.get(symbol, 0.0),
-                    'weight': weights.get(symbol, 0.0),
-                    'contribution': weights.get(symbol, 0.0) * stock_returns.get(symbol, 0.0)
+                    'return': safe_float(stock_returns.get(symbol, 0.0)),
+                    'weight': safe_float(weights.get(symbol, 0.0)),
+                    'contribution': safe_float(weights.get(symbol, 0.0) * stock_returns.get(symbol, 0.0))
                 }
                 for symbol in symbols
             }
@@ -526,6 +553,11 @@ class PerformanceService:
         benchmark_weights: Optional[Dict[str, float]]
     ) -> Dict[str, Dict[str, float]]:
         """Calculate sector-level attribution"""
+        def safe_float(value):
+            if pd.isna(value) or np.isinf(value):
+                return 0.0
+            return float(value)
+
         sector_data = {}
 
         for holding in portfolio.holdings:
@@ -545,12 +577,13 @@ class PerformanceService:
             sector_data[sector]['weight'] += weight
             sector_data[sector]['contribution'] += weight * stock_return
 
-        # Calculate sector returns
+        # Calculate sector returns with safe float handling
         for sector in sector_data:
             if sector_data[sector]['weight'] > 0:
-                sector_data[sector]['return'] = (
-                    sector_data[sector]['contribution'] / sector_data[sector]['weight']
-                )
+                sector_return = sector_data[sector]['contribution'] / sector_data[sector]['weight']
+                sector_data[sector]['return'] = safe_float(sector_return)
+            sector_data[sector]['weight'] = safe_float(sector_data[sector]['weight'])
+            sector_data[sector]['contribution'] = safe_float(sector_data[sector]['contribution'])
 
         return sector_data
 
@@ -561,6 +594,11 @@ class PerformanceService:
         weights: Dict[str, float]
     ) -> Dict[str, Dict[str, float]]:
         """Calculate country-level attribution"""
+        def safe_float(value):
+            if pd.isna(value) or np.isinf(value):
+                return 0.0
+            return float(value)
+
         country_data = {}
 
         for holding in portfolio.holdings:
@@ -580,12 +618,13 @@ class PerformanceService:
             country_data[country]['weight'] += weight
             country_data[country]['contribution'] += weight * stock_return
 
-        # Calculate country returns
+        # Calculate country returns with safe float handling
         for country in country_data:
             if country_data[country]['weight'] > 0:
-                country_data[country]['return'] = (
-                    country_data[country]['contribution'] / country_data[country]['weight']
-                )
+                country_return = country_data[country]['contribution'] / country_data[country]['weight']
+                country_data[country]['return'] = safe_float(country_return)
+            country_data[country]['weight'] = safe_float(country_data[country]['weight'])
+            country_data[country]['contribution'] = safe_float(country_data[country]['contribution'])
 
         return country_data
 
