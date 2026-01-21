@@ -14,6 +14,7 @@ from models.portfolio import (
 )
 from services.schwab_client import schwab_client, SCHWAB_AVAILABLE
 from services.performance import performance_service
+from services.performance_v2 import performance_calculator
 from services.risk import risk_service, STRESS_SCENARIOS
 from services.holdings import holdings_service
 from services.market_data import market_data_service
@@ -262,6 +263,55 @@ async def calculate_attribution(
         return attribution
     except Exception as e:
         logger.error(f"Error calculating attribution: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/performance-v2/{account_id}")
+async def get_comprehensive_performance(account_id: str):
+    """
+    Get comprehensive performance metrics across all time periods
+    Returns Simple Return, TWR, and MWR for portfolio and each security
+    """
+    try:
+        portfolio = await get_portfolio(account_id)
+
+        # Fetch all transactions from inception
+        if portfolio.inception_date:
+            inception = portfolio.inception_date
+            if inception.tzinfo is None:
+                inception = inception.replace(tzinfo=timezone.utc)
+            days_since_inception = (datetime.now(timezone.utc) - inception).days + 30
+        else:
+            days_since_inception = 3650
+
+        transactions_response = await get_transactions(account_id, days=days_since_inception)
+        transactions = transactions_response.get("transactions", [])
+
+        # Calculate performance for all periods
+        results = performance_calculator.calculate_performance_for_all_periods(
+            portfolio, transactions
+        )
+
+        # Convert time series DataFrames to JSON-serializable format
+        time_series_json = {}
+        for period, df in results['time_series'].items():
+            time_series_json[period] = {
+                'dates': df['date'].dt.strftime('%Y-%m-%d').tolist(),
+                'simple_return': df['simple_return'].tolist(),
+                'twr': df['twr'].tolist(),
+                'mwr': df['mwr'].tolist()
+            }
+
+        return {
+            'portfolio': results['portfolio'],
+            'securities': results['securities'],
+            'time_series': time_series_json
+        }
+
+    except Exception as e:
+        logger.error(f"Error calculating comprehensive performance: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
