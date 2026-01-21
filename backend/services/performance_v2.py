@@ -88,25 +88,34 @@ class PerformanceCalculator:
 
             # Portfolio-level performance
             logger.info(f"  Calculating portfolio performance for {period_label}...")
+            print(f"  [Step A] Portfolio-level for {period_label}...")
             results['portfolio'][period_label] = self._calculate_portfolio_performance(
                 portfolio, transactions, start_date, end_date
             )
+            print(f"  [Step A] Portfolio-level DONE")
 
             # Security-level performance
-            for symbol in symbols:
+            print(f"  [Step B] Security-level for {period_label} ({len(symbols)} symbols)...")
+            for i, symbol in enumerate(symbols):
+                print(f"    [{i+1}/{len(symbols)}] Calculating {symbol}...")
                 if symbol not in results['securities']:
                     results['securities'][symbol] = {}
 
                 results['securities'][symbol][period_label] = self._calculate_security_performance(
                     symbol, transactions, start_date, end_date
                 )
+                print(f"    [{i+1}/{len(symbols)}] {symbol} DONE")
+            print(f"  [Step B] Security-level DONE")
 
             # Time series for charting
             logger.info(f"  Building time series for {period_label}...")
+            print(f"  [Step C] Time series for {period_label}...")
             results['time_series'][period_label] = self._build_time_series(
                 portfolio, transactions, start_date, end_date
             )
             logger.info(f"  Completed {period_label}")
+            print(f"  [Step C] Time series DONE")
+            print(f"✓ Completed {period_label}\n")
 
         logger.info("=== PERFORMANCE_V2 CALCULATION COMPLETE ===")
         print("=== PERFORMANCE_V2 CALCULATION COMPLETE ===")
@@ -121,27 +130,37 @@ class PerformanceCalculator:
     ) -> Dict:
         """Calculate Simple, TWR, and MWR for entire portfolio"""
 
+        print(f"    [Portfolio Perf] Getting start value...")
         # Get portfolio value at start and end
         start_value = self._calculate_portfolio_value_at_date(transactions, start_date)
         end_value = portfolio.total_value
+        print(f"    [Portfolio Perf] Start=${start_value:,.2f}, End=${end_value:,.2f}")
 
+        print(f"    [Portfolio Perf] Getting cash flows...")
         # Get all cash flows in the period (excluding CASH placeholders)
         cash_flows = self._get_portfolio_cash_flows(transactions, start_date, end_date)
+        print(f"    [Portfolio Perf] Found {len(cash_flows)} cash flows")
 
+        print(f"    [Portfolio Perf] Calculating Simple Return...")
         # Calculate Simple Return (Modified Dietz)
         simple_return = self._calculate_simple_return(
             start_value, end_value, cash_flows, start_date, end_date
         )
+        print(f"    [Portfolio Perf] Simple Return: {simple_return}")
 
+        print(f"    [Portfolio Perf] Calculating TWR (this may take a moment)...")
         # Calculate TWR
         twr = self._calculate_twr_portfolio(
             transactions, start_date, end_date
         )
+        print(f"    [Portfolio Perf] TWR: {twr}")
 
+        print(f"    [Portfolio Perf] Calculating MWR...")
         # Calculate MWR (IRR)
         mwr = self._calculate_mwr(
             cash_flows, start_value, end_value, start_date, end_date
         )
+        print(f"    [Portfolio Perf] MWR: {mwr}")
 
         return {
             'simple_return': simple_return,
