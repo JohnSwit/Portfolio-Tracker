@@ -43,6 +43,7 @@ def init_database():
                 amount REAL NOT NULL,
                 fees REAL DEFAULT 0.0,
                 notes TEXT,
+                is_synthetic INTEGER DEFAULT 0,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -80,6 +81,37 @@ def init_database():
         logger.info("Database initialized successfully")
 
 
+def migrate_database():
+    """Apply database migrations for existing databases"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Check if is_synthetic column exists
+        cursor.execute("PRAGMA table_info(transactions)")
+        columns = [col[1] for col in cursor.fetchall()]
+
+        if 'is_synthetic' not in columns:
+            logger.info("Adding is_synthetic column to transactions table...")
+            cursor.execute("""
+                ALTER TABLE transactions
+                ADD COLUMN is_synthetic INTEGER DEFAULT 0
+            """)
+
+            # Backfill: mark existing CASH transactions as synthetic if they match the pattern
+            cursor.execute("""
+                UPDATE transactions
+                SET is_synthetic = 1
+                WHERE symbol = 'CASH'
+                  AND (notes LIKE 'Auto-%' OR notes LIKE 'auto-%')
+            """)
+
+            rows_updated = cursor.rowcount
+            logger.info(f"Marked {rows_updated} existing CASH transactions as synthetic")
+
+        conn.commit()
+        logger.info("Database migration completed successfully")
+
+
 def save_transactions(account_id: str, transactions: List[dict]) -> int:
     """Save transactions to database"""
     with get_db() as conn:
@@ -89,8 +121,8 @@ def save_transactions(account_id: str, transactions: List[dict]) -> int:
         for txn in transactions:
             cursor.execute("""
                 INSERT INTO transactions
-                (account_id, date, symbol, transaction_type, quantity, price, amount, fees, notes)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (account_id, date, symbol, transaction_type, quantity, price, amount, fees, notes, is_synthetic)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 account_id,
                 txn['date'],
@@ -100,7 +132,8 @@ def save_transactions(account_id: str, transactions: List[dict]) -> int:
                 txn['price'],
                 txn['amount'],
                 txn.get('fees', 0.0),
-                txn.get('notes', '')
+                txn.get('notes', ''),
+                1 if txn.get('is_synthetic', False) else 0
             ))
             inserted += 1
 
@@ -141,7 +174,8 @@ def get_transactions(account_id: str, start_date: Optional[str] = None, end_date
                 'price': row['price'],
                 'amount': row['amount'],
                 'fees': row['fees'],
-                'notes': row['notes']
+                'notes': row['notes'],
+                'is_synthetic': row['is_synthetic'] if 'is_synthetic' in row.keys() else 0
             })
 
         return transactions

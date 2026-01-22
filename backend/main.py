@@ -47,6 +47,17 @@ app.add_middleware(
 )
 
 
+# Startup event: Initialize and migrate database
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database and run migrations on startup"""
+    logger.info("Initializing database...")
+    database.init_database()
+    logger.info("Running database migrations...")
+    database.migrate_database()
+    logger.info("Database ready")
+
+
 # Request/Response models
 class DateRangeQuery(BaseModel):
     start_date: datetime
@@ -466,7 +477,8 @@ async def upload_csv(account_id: str, file: UploadFile = File(...)):
                     'price': 1.0,
                     'amount': cash_amount,
                     'fees': 0.0,
-                    'notes': f"Auto-deposit to fund {txn['symbol']} purchase"
+                    'notes': f"Auto-deposit to fund {txn['symbol']} purchase",
+                    'is_synthetic': True  # Mark as synthetic for performance calculations
                 }
                 all_transactions.append(cash_txn)
             elif txn_type == 'sell':
@@ -480,7 +492,8 @@ async def upload_csv(account_id: str, file: UploadFile = File(...)):
                     'price': 1.0,
                     'amount': -cash_amount,
                     'fees': 0.0,
-                    'notes': f"Auto-withdrawal of {txn['symbol']} sale proceeds"
+                    'notes': f"Auto-withdrawal of {txn['symbol']} sale proceeds",
+                    'is_synthetic': True  # Mark as synthetic for performance calculations
                 }
                 all_transactions.append(cash_txn)
             elif txn_type == 'dividend':
@@ -494,7 +507,8 @@ async def upload_csv(account_id: str, file: UploadFile = File(...)):
                     'price': 1.0,
                     'amount': -cash_amount,
                     'fees': 0.0,
-                    'notes': f"Auto-withdrawal of {txn['symbol']} dividend"
+                    'notes': f"Auto-withdrawal of {txn['symbol']} dividend",
+                    'is_synthetic': True  # Mark as synthetic for performance calculations
                 }
                 all_transactions.append(cash_txn)
 
@@ -630,7 +644,8 @@ async def add_transaction(account_id: str, transaction: dict):
                 'price': 1.0,
                 'amount': cash_amount,
                 'fees': 0.0,
-                'notes': f'Auto-deposit to fund {symbol} purchase'
+                'notes': f'Auto-deposit to fund {symbol} purchase',
+                'is_synthetic': True  # Mark as synthetic for performance calculations
             }
             transactions_to_save.append(cash_txn)
         elif txn_type == 'sell':
@@ -644,7 +659,8 @@ async def add_transaction(account_id: str, transaction: dict):
                 'price': 1.0,
                 'amount': -cash_amount,
                 'fees': 0.0,
-                'notes': f'Auto-withdrawal of {symbol} sale proceeds'
+                'notes': f'Auto-withdrawal of {symbol} sale proceeds',
+                'is_synthetic': True  # Mark as synthetic for performance calculations
             }
             transactions_to_save.append(cash_txn)
         elif txn_type == 'dividend':
@@ -658,7 +674,8 @@ async def add_transaction(account_id: str, transaction: dict):
                 'price': 1.0,
                 'amount': -cash_amount,
                 'fees': 0.0,
-                'notes': f'Auto-withdrawal of {symbol} dividend'
+                'notes': f'Auto-withdrawal of {symbol} dividend',
+                'is_synthetic': True  # Mark as synthetic for performance calculations
             }
             transactions_to_save.append(cash_txn)
 
