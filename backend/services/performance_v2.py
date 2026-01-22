@@ -650,13 +650,23 @@ class PerformanceCalculator:
         """
         Get all EXTERNAL portfolio cash flows in period
 
-        CRITICAL: This excludes synthetic transactions (is_synthetic=True) which are
-        auto-generated to balance cash. We only count EXTERNAL flows:
-        - Real BUY: negative amount (cash outflow / contribution)
-        - Real SELL: positive amount (cash inflow / withdrawal)
-        - DIVIDEND: positive amount (income)
-        - Real DEPOSIT: positive amount (external contribution)
-        - Real WITHDRAWAL: negative amount (external withdrawal)
+        CRITICAL SIGN INTERPRETATION:
+        Transaction amounts represent internal cash account movements:
+        - BUY: amount is negative (cash leaving account)
+        - SELL: amount is positive (cash entering account)
+
+        But for EXTERNAL FLOW perspective (investor contributions/withdrawals):
+        - BUY: represents money INVESTED (positive contribution)
+        - SELL: represents money WITHDRAWN (negative withdrawal)
+
+        Therefore, we FLIP the sign: external_flow = -transaction.amount
+
+        This ensures:
+        - Real BUY: external contribution = -(-amount) = +amount (positive)
+        - Real SELL: external withdrawal = -(+amount) = -amount (negative)
+        - DIVIDEND: income stays positive
+        - Real DEPOSIT: contribution stays positive
+        - Real WITHDRAWAL: withdrawal stays negative
         """
         flows = []
         synthetic_excluded = 0
@@ -671,7 +681,11 @@ class PerformanceCalculator:
                 continue
 
             if start_date < txn_date <= end_date:
-                flows.append((txn_date, txn.amount))
+                # CRITICAL FIX: Flip sign to convert internal cash movement to external flow
+                # BUY (amount=-X) becomes contribution (+X)
+                # SELL (amount=+X) becomes withdrawal (-X)
+                external_flow = -txn.amount
+                flows.append((txn_date, external_flow))
 
         if synthetic_excluded > 0:
             print(f"        [Cash Flows] Excluded {synthetic_excluded} synthetic transactions (auto-generated for cash balance)")
@@ -691,12 +705,20 @@ class PerformanceCalculator:
         start_date: datetime,
         end_date: datetime
     ) -> List[Tuple[datetime, float]]:
-        """Get cash flows for a specific security"""
+        """
+        Get cash flows for a specific security
+
+        CRITICAL: Same sign flip as portfolio cash flows:
+        - BUY: external flow = -amount (positive contribution)
+        - SELL: external flow = -amount (negative withdrawal)
+        """
         flows = []
         for txn in transactions:
             txn_date = self._normalize_to_utc(txn.date)
             if txn.symbol == symbol and start_date < txn_date <= end_date:
-                flows.append((txn_date, txn.amount))
+                # CRITICAL FIX: Flip sign to convert internal cash movement to external flow
+                external_flow = -txn.amount
+                flows.append((txn_date, external_flow))
 
         return flows
 
